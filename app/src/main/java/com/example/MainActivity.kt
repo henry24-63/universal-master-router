@@ -19,6 +19,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.ui.screens.AccountsScreen
+import com.example.ui.screens.ApiKeysScreen
+import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.DatabaseBrowserScreen
 import com.example.ui.screens.RoutingRulesScreen
@@ -31,6 +33,7 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector)
   object Accounts : Screen("accounts", "Accounts", Icons.Default.Cloud)
   object Database : Screen("database", "Database", Icons.Default.Storage)
   object Rules : Screen("rules", "Routing", Icons.Default.Route)
+  object ApiKeys : Screen("api_keys", "API Keys", Icons.Default.VpnKey)
   object Settings : Screen("settings", "Settings", Icons.Default.Settings)
 }
 
@@ -42,18 +45,29 @@ class MainActivity : ComponentActivity() {
     enableEdgeToEdge()
     setContent {
       MasterRouterTheme {
-        val navController = rememberNavController()
-        val items = listOf(
-          Screen.Dashboard,
-          Screen.Accounts,
-          Screen.Database,
-          Screen.Rules,
-          Screen.Settings
-        )
+        val currentUser by viewModel.currentUser.collectAsState()
+        val sessionCookie by viewModel.sessionCookie.collectAsState()
+        val apiKey by viewModel.apiKey.collectAsState()
+        val isAuthInitialized by viewModel.isAuthInitialized.collectAsState()
 
-        Scaffold(
-          modifier = Modifier.fillMaxSize(),
-          bottomBar = {
+        val isAuthenticated = currentUser != null || sessionCookie.isNotEmpty() || apiKey.isNotEmpty()
+
+        if (!isAuthenticated && isAuthInitialized) {
+          AuthScreen(viewModel)
+        } else {
+          val navController = rememberNavController()
+          val items = listOf(
+            Screen.Dashboard,
+            Screen.Accounts,
+            Screen.Database,
+            Screen.Rules,
+            Screen.ApiKeys,
+            Screen.Settings
+          )
+
+          Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            bottomBar = {
             NavigationBar {
               val navBackStackEntry by navController.currentBackStackEntryAsState()
               val currentRoute = navBackStackEntry?.destination?.route
@@ -97,9 +111,13 @@ class MainActivity : ComponentActivity() {
             composable(Screen.Rules.route) {
               RoutingRulesScreen(viewModel)
             }
+            composable(Screen.ApiKeys.route) {
+              ApiKeysScreen(viewModel)
+            }
             composable(Screen.Settings.route) {
               SettingsScreen(viewModel)
             }
+          }
           }
         }
       }

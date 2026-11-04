@@ -102,9 +102,19 @@ export default {
 
       // 2. Auth: Check Setup Status
       if (path === '/v1/auth/setup-status' && request.method === 'GET') {
-        const adminCount: any = await env.DB.prepare('SELECT count(*) as count FROM admin_users').first();
-        const hasAdmin = Number(adminCount?.count || 0) > 0;
-        return jsonResponse({ has_admin: hasAdmin }, requestId);
+        try {
+          const adminCount: any = await env.DB.prepare('SELECT count(*) as count FROM admin_users').first();
+          const hasAdmin = Number(adminCount?.count || 0) > 0;
+          return jsonResponse({ has_admin: hasAdmin, db_initialized: true }, requestId);
+        } catch (err: any) {
+          const msg = err?.message || String(err);
+          const isTableMissing = msg.toLowerCase().includes('no such table') || msg.includes('admin_users');
+          return jsonResponse({
+            has_admin: false,
+            db_initialized: !isTableMissing,
+            warning: isTableMissing ? 'Database table admin_users does not exist yet. Please execute migration 0002_admin_auth.sql on Cloudflare D1.' : msg
+          }, requestId);
+        }
       }
 
       // 3. Auth: First-Time Owner Setup (Atomic Single-Owner Registration)
@@ -112,11 +122,20 @@ export default {
         const body: any = await request.json().catch(() => ({}));
         const { email, password, name } = body;
 
-        if (!email || !password || !name) {
-          return jsonResponse(null, requestId, 'Missing required fields: email, password, name.', 400);
+        const trimmedEmail = (email || '').trim().toLowerCase();
+        const trimmedName = (name || '').trim();
+
+        if (!trimmedName || !trimmedEmail || !password) {
+          return jsonResponse(null, requestId, 'Missing required fields: name, email, password.', 400);
         }
-        if (password.length < 8) {
-          return jsonResponse(null, requestId, 'Password must be at least 8 characters long.', 400);
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(trimmedEmail)) {
+          return jsonResponse(null, requestId, 'Invalid email address format.', 400);
+        }
+
+        if (password.length < 12) {
+          return jsonResponse(null, requestId, 'Password must be at least 12 characters long.', 400);
         }
 
         const passwordData = await hashPassword(password);
@@ -127,13 +146,29 @@ export default {
           `INSERT INTO admin_users (id, email, password_hash, password_salt, name, is_owner)
            SELECT ?, ?, ?, ?, ?, 1
            WHERE (SELECT count(*) FROM admin_users) = 0`
-        ).bind(userId, email.toLowerCase().trim(), passwordData.hashHex, passwordData.saltHex, name).run();
+        ).bind(userId, trimmedEmail, passwordData.hashHex, passwordData.saltHex, trimmedName).run();
 
         if (result.changes === 0) {
           return jsonResponse(null, requestId, 'Setup closed: A platform owner account already exists.', 403);
         }
 
-        return jsonResponse({ id: userId, email, name, message: 'Platform owner initialized successfully.' }, requestId, null, 201);
+        // Auto-create session on successful owner setup
+        const sessionId = generateSessionId();
+        const csrfToken = generateCsrfToken();
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+        await env.DB.prepare(
+          `INSERT INTO admin_sessions (id, user_id, csrf_token, expires_at)
+           VALUES (?, ?, ?, ?)`
+        ).bind(sessionId, userId, csrfToken, expiresAt).run();
+
+        const cookieHeader = `umr_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=604800`;
+
+        return jsonResponse({
+          user: { id: userId, email: trimmedEmail, name: trimmedName, is_owner: true },
+          csrf_token: csrfToken,
+          message: 'Platform owner account initialized successfully.'
+        }, requestId, null, 201, { 'Set-Cookie': cookieHeader });
       }
 
       // 4. Auth: Login (Email & Password with Session Cookie)

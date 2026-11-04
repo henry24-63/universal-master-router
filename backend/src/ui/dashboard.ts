@@ -396,11 +396,26 @@ export function renderDashboardHtml(): string {
     </div>
   </main>
 
+  <!-- Error Modal with Retry -->
+  <div id="error-modal" class="modal-overlay hidden">
+    <div class="glass modal">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+        <span style="background:rgba(239,68,68,0.2); color:var(--danger); padding:6px; border-radius:8px; font-size:1.2rem;">⚠️</span>
+        <h2 style="font-size:1.2rem;">Master Router Setup Notice</h2>
+      </div>
+      <p id="error-modal-message" style="color:var(--text-muted); font-size:0.85rem; margin-bottom:16px; line-height:1.5;">
+        Unable to verify administrator setup status.
+      </p>
+      <div id="error-modal-warning" class="hidden" style="background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.25); border-radius:8px; padding:12px; margin-bottom:16px; font-size:0.8rem; color:#FDE68A;"></div>
+      <button type="button" class="btn btn-primary" style="width:100%; justify-content:center;" onclick="checkAuthStatus()">Retry Connection</button>
+    </div>
+  </div>
+
   <!-- Login Modal -->
   <div id="login-modal" class="modal-overlay hidden">
     <div class="glass modal">
       <h2 style="margin-bottom: 8px;">Administrator Login</h2>
-      <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:24px;">Enter your credentials to manage the Master Router control plane.</p>
+      <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:24px;">Enter your administrator credentials to manage the Master Router control plane.</p>
       <form id="login-form" onsubmit="handleLogin(event)">
         <div class="form-group">
           <label>Email Address</label>
@@ -411,7 +426,7 @@ export function renderDashboardHtml(): string {
           <input type="password" id="login-password" required placeholder="••••••••••••">
         </div>
         <div id="login-error" style="color:var(--danger); font-size:0.85rem; margin-bottom:12px;"></div>
-        <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center;">Sign In</button>
+        <button type="submit" id="login-submit-btn" class="btn btn-primary" style="width:100%; justify-content:center;">Sign In</button>
       </form>
     </div>
   </div>
@@ -419,8 +434,13 @@ export function renderDashboardHtml(): string {
   <!-- First-Time Owner Setup Modal -->
   <div id="setup-modal" class="modal-overlay hidden">
     <div class="glass modal">
-      <h2 style="margin-bottom: 8px;">Initialize Platform Owner</h2>
-      <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:24px;">No administrator account exists yet. Create the primary platform owner account.</p>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+        <span style="background:rgba(99,102,241,0.2); color:var(--primary); padding:6px; border-radius:8px; font-size:1.2rem;">🛡️</span>
+        <h2>First-Time Administrator Setup</h2>
+      </div>
+      <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:20px; line-height:1.4;">
+        No administrator account exists yet. Create your platform owner account to secure and initialize the Universal Master Router.
+      </p>
       <form id="setup-form" onsubmit="handleSetup(event)">
         <div class="form-group">
           <label>Full Name</label>
@@ -431,11 +451,15 @@ export function renderDashboardHtml(): string {
           <input type="email" id="setup-email" required placeholder="admin@domain.com">
         </div>
         <div class="form-group">
-          <label>Password (min 8 characters)</label>
-          <input type="password" id="setup-password" required minlength="8" placeholder="••••••••••••">
+          <label>Password (minimum 12 characters)</label>
+          <input type="password" id="setup-password" required minlength="12" placeholder="••••••••••••">
+        </div>
+        <div class="form-group">
+          <label>Confirm Password</label>
+          <input type="password" id="setup-confirm-password" required minlength="12" placeholder="••••••••••••">
         </div>
         <div id="setup-error" style="color:var(--danger); font-size:0.85rem; margin-bottom:12px;"></div>
-        <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center;">Initialize Master Owner</button>
+        <button type="submit" id="setup-submit-btn" class="btn btn-primary" style="width:100%; justify-content:center;">Create Platform Owner</button>
       </form>
     </div>
   </div>
@@ -456,15 +480,41 @@ export function renderDashboardHtml(): string {
     let currentCsrfToken = '';
     let currentUser = null;
 
+    function hideAllModals() {
+      document.getElementById('error-modal').classList.add('hidden');
+      document.getElementById('setup-modal').classList.add('hidden');
+      document.getElementById('login-modal').classList.add('hidden');
+    }
+
     async function checkAuthStatus() {
+      hideAllModals();
       try {
         const setupRes = await fetch('/v1/auth/setup-status');
+        if (!setupRes.ok) {
+          throw new Error('Server returned HTTP ' + setupRes.status + ' on setup check');
+        }
         const setupData = await setupRes.json();
+        if (!setupData || !setupData.success) {
+          throw new Error(setupData?.error || 'Failed to parse setup status response');
+        }
+
+        // If D1 tables need migration
+        if (setupData.data.db_initialized === false && setupData.data.warning) {
+          document.getElementById('error-modal-message').innerText = 'Cloudflare D1 tables require initialization.';
+          const warnBox = document.getElementById('error-modal-warning');
+          warnBox.innerText = setupData.data.warning;
+          warnBox.classList.remove('hidden');
+          document.getElementById('error-modal').classList.remove('hidden');
+          return;
+        }
+
+        // Conditional Flow: Has Admin vs First-Time Setup
         if (!setupData.data.has_admin) {
           document.getElementById('setup-modal').classList.remove('hidden');
           return;
         }
 
+        // Administrator already exists — check session
         const meRes = await fetch('/v1/auth/me');
         const meData = await meRes.json();
         if (meData.success && meData.data) {
@@ -475,7 +525,9 @@ export function renderDashboardHtml(): string {
           document.getElementById('login-modal').classList.remove('hidden');
         }
       } catch (e) {
-        document.getElementById('login-modal').classList.remove('hidden');
+        document.getElementById('error-modal-message').innerText = 'Unable to connect to Master Router API: ' + (e.message || 'Network error');
+        document.getElementById('error-modal-warning').classList.add('hidden');
+        document.getElementById('error-modal').classList.remove('hidden');
       }
     }
 
@@ -483,21 +535,54 @@ export function renderDashboardHtml(): string {
       e.preventDefault();
       const errBox = document.getElementById('setup-error');
       errBox.innerText = '';
-      const name = document.getElementById('setup-name').value;
-      const email = document.getElementById('setup-email').value;
-      const password = document.getElementById('setup-password').value;
 
-      const res = await fetch('/v1/auth/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password })
-      });
-      const data = await res.json();
-      if (data.success) {
-        document.getElementById('setup-modal').classList.add('hidden');
-        checkAuthStatus();
-      } else {
-        errBox.innerText = data.error || 'Failed to initialize owner.';
+      const name = document.getElementById('setup-name').value.trim();
+      const email = document.getElementById('setup-email').value.trim();
+      const password = document.getElementById('setup-password').value;
+      const confirmPassword = document.getElementById('setup-confirm-password').value;
+      const submitBtn = document.getElementById('setup-submit-btn');
+
+      // Client-side validations
+      if (!name) {
+        errBox.innerText = 'Please enter your full name.';
+        return;
+      }
+      const emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+      if (!emailRegex.test(email)) {
+        errBox.innerText = 'Please enter a valid email address.';
+        return;
+      }
+      if (password.length < 12) {
+        errBox.innerText = 'Password must be at least 12 characters.';
+        return;
+      }
+      if (password !== confirmPassword) {
+        errBox.innerText = 'Passwords do not match. Please re-enter.';
+        return;
+      }
+
+      // Prevent duplicate submissions
+      submitBtn.disabled = true;
+      submitBtn.innerText = 'Initializing Platform Owner...';
+
+      try {
+        const res = await fetch('/v1/auth/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password })
+        });
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById('setup-modal').classList.add('hidden');
+          await checkAuthStatus();
+        } else {
+          errBox.innerText = data.error || 'Failed to initialize platform owner.';
+        }
+      } catch (err) {
+        errBox.innerText = 'Network error during setup: ' + err.message;
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerText = 'Create Platform Owner';
       }
     }
 
@@ -505,20 +590,31 @@ export function renderDashboardHtml(): string {
       e.preventDefault();
       const errBox = document.getElementById('login-error');
       errBox.innerText = '';
-      const email = document.getElementById('login-email').value;
+      const email = document.getElementById('login-email').value.trim();
       const password = document.getElementById('login-password').value;
+      const submitBtn = document.getElementById('login-submit-btn');
 
-      const res = await fetch('/v1/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      const data = await res.json();
-      if (data.success) {
-        document.getElementById('login-modal').classList.add('hidden');
-        checkAuthStatus();
-      } else {
-        errBox.innerText = data.error || 'Invalid credentials.';
+      submitBtn.disabled = true;
+      submitBtn.innerText = 'Signing In...';
+
+      try {
+        const res = await fetch('/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById('login-modal').classList.add('hidden');
+          await checkAuthStatus();
+        } else {
+          errBox.innerText = data.error || 'Invalid administrator credentials.';
+        }
+      } catch (err) {
+        errBox.innerText = 'Network error during login: ' + err.message;
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerText = 'Sign In';
       }
     }
 

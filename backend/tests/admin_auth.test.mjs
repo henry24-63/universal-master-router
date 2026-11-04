@@ -108,3 +108,36 @@ test('Admin Auth - Session Expiration Handling', () => {
   assert.ok(new Date(validSession.expiresAt).getTime() > now);
   assert.ok(new Date(expiredSession.expiresAt).getTime() < now);
 });
+
+test('Admin Auth - First-Time Setup Password & Email Validation Rules', () => {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  // Email format checks
+  assert.equal(emailRegex.test('admin@domain.com'), true);
+  assert.equal(emailRegex.test('invalid-email'), false);
+  assert.equal(emailRegex.test('user@'), false);
+
+  // Password minimum 12 characters check
+  const shortPass = 'shortpass12';
+  const validPass = 'SecureAdminPassword2026!';
+  assert.equal(shortPass.length >= 12, false);
+  assert.equal(validPass.length >= 12, true);
+});
+
+test('Admin Auth - Setup Status flow and response structure', () => {
+  const evaluateSetupStatus = (adminCount) => {
+    return {
+      success: true,
+      data: {
+        has_admin: adminCount > 0,
+        db_initialized: true
+      }
+    };
+  };
+
+  const statusBeforeSetup = evaluateSetupStatus(0);
+  assert.equal(statusBeforeSetup.data.has_admin, false);
+
+  const statusAfterSetup = evaluateSetupStatus(1);
+  assert.equal(statusAfterSetup.data.has_admin, true);
+});

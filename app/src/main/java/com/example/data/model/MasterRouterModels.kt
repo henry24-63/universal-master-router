@@ -66,3 +66,83 @@ data class ConnectRequest(
   @Json(name = "api_key") val apiKey: String,
   @Json(name = "region") val region: String
 )
+
+// Admin Authentication & Setup Models
+@JsonClass(generateAdapter = true)
+data class SetupStatusResponse(
+  @Json(name = "has_admin") val hasAdmin: Boolean,
+  @Json(name = "db_initialized") val dbInitialized: Boolean? = true,
+  @Json(name = "warning") val warning: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SetupRequest(
+  @Json(name = "name") val name: String,
+  @Json(name = "email") val email: String,
+  @Json(name = "password") val password: String
+)
+
+@JsonClass(generateAdapter = true)
+data class SetupResponse(
+  @Json(name = "user") val user: AdminUser,
+  @Json(name = "csrf_token") val csrfToken: String? = null,
+  @Json(name = "message") val message: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class LoginRequest(
+  @Json(name = "email") val email: String,
+  @Json(name = "password") val password: String
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminUser(
+  @Json(name = "id") val id: String,
+  @Json(name = "email") val email: String,
+  @Json(name = "name") val name: String,
+  @Json(name = "is_owner") val isOwner: Boolean
+)
+
+@JsonClass(generateAdapter = true)
+data class LoginResponse(
+  @Json(name = "user") val user: AdminUser,
+  @Json(name = "csrf_token") val csrfToken: String
+)
+
+@JsonClass(generateAdapter = true)
+data class AuthMeResponse(
+  @Json(name = "user") val user: AdminUser,
+  @Json(name = "csrf_token") val csrfToken: String
+)
+
+// Master Router API Key Management Models
+@JsonClass(generateAdapter = true)
+data class MasterApiKey(
+  @Json(name = "id") val id: String,
+  @Json(name = "name") val name: String,
+  @Json(name = "prefix") val prefix: String,
+  @Json(name = "scopes") val scopes: String?,
+  @Json(name = "tenant_id") val tenantId: String?,
+  @Json(name = "rate_limit_rpm") val rateLimitRpm: Int?,
+  @Json(name = "is_admin") val isAdmin: Int?,
+  @Json(name = "created_at") val createdAt: String,
+  @Json(name = "revoked_at") val revokedAt: String?
+)
+
+@JsonClass(generateAdapter = true)
+data class CreateKeyRequest(
+  @Json(name = "name") val name: String,
+  @Json(name = "scopes") val scopes: List<String>?,
+  @Json(name = "tenant_id") val tenantId: String?,
+  @Json(name = "rate_limit_rpm") val rateLimitRpm: Int?,
+  @Json(name = "is_admin") val isAdmin: Boolean?
+)
+
+@JsonClass(generateAdapter = true)
+data class CreateKeyResponse(
+  @Json(name = "id") val id: String,
+  @Json(name = "name") val name: String,
+  @Json(name = "api_key") val apiKey: String, // Plaintext secret returned only once
+  @Json(name = "prefix") val prefix: String,
+  @Json(name = "is_admin") val isAdmin: Boolean
+)
