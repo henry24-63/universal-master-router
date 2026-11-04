@@ -71,6 +71,55 @@ function hasScope(keyScopesJson: string, requiredScope: string): boolean {
   }
 }
 
+function parseDatabaseError(err: any): {
+  isTableMissing: boolean;
+  tableName?: string;
+  userMessage: string;
+  requiredMigration?: string;
+} {
+  const msg = err?.message || String(err);
+  const lowerMsg = msg.toLowerCase();
+
+  if (lowerMsg.includes('no such table')) {
+    let tableName = 'unknown';
+    const match = msg.match(/no such table:\s*([a-zA-Z0-9_]+)/i) || msg.match(/no such table\s+([a-zA-Z0-9_]+)/i);
+    if (match && match[1]) {
+      tableName = match[1];
+    } else {
+      for (const t of ['admin_users', 'admin_sessions', 'api_keys', 'connected_accounts', 'projects', 'tenants', 'routing_rules', 'account_health', 'usage_metrics']) {
+        if (lowerMsg.includes(t)) {
+          tableName = t;
+          break;
+        }
+      }
+    }
+
+    let migrationName = '0001_initial_schema.sql';
+    if (tableName === 'admin_users' || tableName === 'admin_sessions') {
+      migrationName = '0002_admin_auth.sql';
+    }
+
+    return {
+      isTableMissing: true,
+      tableName,
+      userMessage: `Database table '${tableName}' does not exist in Cloudflare D1. Please execute migration '${migrationName}' in Cloudflare D1 Console.`,
+      requiredMigration: migrationName
+    };
+  }
+
+  if (lowerMsg.includes('cannot read properties of undefined') || lowerMsg.includes('prepare')) {
+    return {
+      isTableMissing: false,
+      userMessage: "Cloudflare D1 database binding 'DB' is missing or not bound in Worker environment. Check wrangler.toml."
+    };
+  }
+
+  return {
+    isTableMissing: false,
+    userMessage: msg || 'Database query execution failed.'
+  };
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const requestId = crypto.randomUUID();
@@ -88,6 +137,8 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    console.log(`[${requestId}] ${request.method} ${path}`);
+
     try {
       // 1. Serve Embedded Glassmorphism Dashboard SPA
       if ((path === '/' || path === '/admin') && request.method === 'GET') {
@@ -100,6 +151,19 @@ export default {
         });
       }
 
+      // Check for missing DB binding on API routes
+      if (!env.DB) {
+        console.error(`[${requestId}] CRITICAL: Database binding 'DB' is undefined on Worker environment.`);
+        if (path === '/v1/auth/setup-status' && request.method === 'GET') {
+          return jsonResponse({
+            has_admin: false,
+            db_initialized: false,
+            warning: "Database binding 'DB' is missing in Worker environment. Please configure D1 binding in wrangler.toml."
+          }, requestId);
+        }
+        return jsonResponse(null, requestId, "Database binding 'DB' is missing or not configured on Cloudflare Worker.", 503);
+      }
+
       // 2. Auth: Check Setup Status
       if (path === '/v1/auth/setup-status' && request.method === 'GET') {
         try {
@@ -107,12 +171,12 @@ export default {
           const hasAdmin = Number(adminCount?.count || 0) > 0;
           return jsonResponse({ has_admin: hasAdmin, db_initialized: true }, requestId);
         } catch (err: any) {
-          const msg = err?.message || String(err);
-          const isTableMissing = msg.toLowerCase().includes('no such table') || msg.includes('admin_users');
+          const parsed = parseDatabaseError(err);
+          console.warn(`[${requestId}] [setup-status] Database check notice: ${parsed.userMessage}`);
           return jsonResponse({
             has_admin: false,
-            db_initialized: !isTableMissing,
-            warning: isTableMissing ? 'Database table admin_users does not exist yet. Please execute migration 0002_admin_auth.sql on Cloudflare D1.' : msg
+            db_initialized: false,
+            warning: parsed.userMessage
           }, requestId);
         }
       }

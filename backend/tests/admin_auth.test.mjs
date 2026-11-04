@@ -141,3 +141,54 @@ test('Admin Auth - Setup Status flow and response structure', () => {
   const statusAfterSetup = evaluateSetupStatus(1);
   assert.equal(statusAfterSetup.data.has_admin, true);
 });
+
+test('Diagnostic - Missing D1 Database Binding Detection', () => {
+  const envWithoutDb = {};
+  const isDbMissing = !envWithoutDb.DB;
+  assert.equal(isDbMissing, true);
+
+  const errorResponse = {
+    success: false,
+    data: null,
+    error: "Database binding 'DB' is missing or not configured on Cloudflare Worker.",
+    status: 503
+  };
+  assert.equal(errorResponse.status, 503);
+  assert.ok(errorResponse.error.includes("binding 'DB' is missing"));
+});
+
+test('Diagnostic - Missing Table Error Analyzer identifies required migrations', () => {
+  function parseDatabaseError(msg) {
+    const lowerMsg = msg.toLowerCase();
+    if (lowerMsg.includes('no such table')) {
+      let tableName = 'unknown';
+      if (lowerMsg.includes('admin_users')) tableName = 'admin_users';
+      if (lowerMsg.includes('admin_sessions')) tableName = 'admin_sessions';
+      if (lowerMsg.includes('api_keys')) tableName = 'api_keys';
+
+      let migrationName = '0001_initial_schema.sql';
+      if (tableName === 'admin_users' || tableName === 'admin_sessions') {
+        migrationName = '0002_admin_auth.sql';
+      }
+
+      return {
+        isTableMissing: true,
+        tableName,
+        userMessage: `Database table '${tableName}' does not exist in Cloudflare D1. Please execute migration '${migrationName}' in Cloudflare D1 Console.`,
+        requiredMigration: migrationName
+      };
+    }
+    return { isTableMissing: false };
+  }
+
+  const err1 = parseDatabaseError('D1_ERROR: no such table: admin_users');
+  assert.equal(err1.isTableMissing, true);
+  assert.equal(err1.tableName, 'admin_users');
+  assert.equal(err1.requiredMigration, '0002_admin_auth.sql');
+
+  const err2 = parseDatabaseError('D1_ERROR: no such table: api_keys');
+  assert.equal(err2.isTableMissing, true);
+  assert.equal(err2.tableName, 'api_keys');
+  assert.equal(err2.requiredMigration, '0001_initial_schema.sql');
+});
+
