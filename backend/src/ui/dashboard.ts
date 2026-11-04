@@ -449,6 +449,10 @@ export function renderDashboardHtml(): string {
           <input type="url" id="acc-endpoint" required placeholder="https://sgp.cloud.appwrite.io/v1">
         </div>
         <div class="form-group">
+          <label>Appwrite Project ID</label>
+          <input type="text" id="acc-project-id" required placeholder="6aeb5720003291868b64">
+        </div>
+        <div class="form-group">
           <label>Master Appwrite API Key</label>
           <input type="password" id="acc-key" required placeholder="Standard or Master Key">
         </div>
@@ -893,7 +897,8 @@ export function renderDashboardHtml(): string {
       errBox.innerText = '';
       const label = document.getElementById('acc-label').value.trim();
       const endpoint = document.getElementById('acc-endpoint').value.trim();
-      const master_api_key = document.getElementById('acc-key').value.trim();
+      const project_id = document.getElementById('acc-project-id').value.trim();
+      const api_key = document.getElementById('acc-key').value.trim();
       const region = document.getElementById('acc-region').value;
       const btn = document.getElementById('add-acc-submit');
 
@@ -904,10 +909,12 @@ export function renderDashboardHtml(): string {
         const res = await fetch('/v1/accounts/manual', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': currentCsrfToken },
-          body: JSON.stringify({ label, endpoint, master_api_key, region })
+          body: JSON.stringify({ label, endpoint, project_id, api_key, region })
         });
         const data = await res.json();
         if (data.success) {
+          document.getElementById('acc-key').value = '';
+          document.getElementById('acc-project-id').value = '';
           closeAddAccountModal();
           loadAllData();
         } else {

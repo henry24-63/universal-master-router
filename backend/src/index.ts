@@ -435,10 +435,24 @@ export default {
         }
 
         const body: any = await request.json().catch(() => ({}));
-        const { label, endpoint, project_id, api_key, region } = body;
 
-        if (!label || !endpoint || !project_id || !api_key) {
-          return jsonResponse(null, requestId, 'Missing required connection fields: label, endpoint, project_id, api_key.', 400);
+        const label = (body.label || '').trim();
+        const endpoint = (body.endpoint || '').trim();
+        const project_id = (body.project_id || body.projectId || body.default_project_id || '').trim();
+        const api_key = (body.api_key || body.apiKey || body.master_api_key || '').trim();
+        const region = (body.region || 'sgp').trim();
+
+        if (!label) {
+          return jsonResponse(null, requestId, 'Missing required connection field: label.', 400);
+        }
+        if (!endpoint) {
+          return jsonResponse(null, requestId, 'Missing required connection field: endpoint.', 400);
+        }
+        if (!project_id) {
+          return jsonResponse(null, requestId, 'Missing required connection field: project_id.', 400);
+        }
+        if (!api_key) {
+          return jsonResponse(null, requestId, 'Missing required connection field: api_key.', 400);
         }
 
         // Validate URL and SSRF protection

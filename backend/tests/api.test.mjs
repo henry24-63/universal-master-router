@@ -223,3 +223,81 @@ test('API Middleware - Strict per-key rate limit enforcement with KV', async () 
   const isBlocked = currentCount >= rateLimitRpm;
   assert.equal(isBlocked, true);
 });
+
+// Connect Account Request Validation Function Replica
+function validateConnectAccountBody(body) {
+  const label = (body.label || '').trim();
+  const endpoint = (body.endpoint || '').trim();
+  const project_id = (body.project_id || body.projectId || body.default_project_id || '').trim();
+  const api_key = (body.api_key || body.apiKey || body.master_api_key || '').trim();
+  const region = (body.region || 'sgp').trim();
+
+  if (!label) return { isValid: false, error: 'Missing required connection field: label.' };
+  if (!endpoint) return { isValid: false, error: 'Missing required connection field: endpoint.' };
+  if (!project_id) return { isValid: false, error: 'Missing required connection field: project_id.' };
+  if (!api_key) return { isValid: false, error: 'Missing required connection field: api_key.' };
+
+  return { isValid: true, label, endpoint, project_id, api_key, region };
+}
+
+test('Connect Account - Rejects missing label', () => {
+  const res = validateConnectAccountBody({ endpoint: 'https://cloud.appwrite.io/v1', project_id: 'proj1', api_key: 'key1' });
+  assert.equal(res.isValid, false);
+  assert.equal(res.error, 'Missing required connection field: label.');
+});
+
+test('Connect Account - Rejects missing endpoint', () => {
+  const res = validateConnectAccountBody({ label: 'My Node', project_id: 'proj1', api_key: 'key1' });
+  assert.equal(res.isValid, false);
+  assert.equal(res.error, 'Missing required connection field: endpoint.');
+});
+
+test('Connect Account - Rejects missing project_id', () => {
+  const res = validateConnectAccountBody({ label: 'My Node', endpoint: 'https://cloud.appwrite.io/v1', api_key: 'key1' });
+  assert.equal(res.isValid, false);
+  assert.equal(res.error, 'Missing required connection field: project_id.');
+});
+
+test('Connect Account - Rejects missing api_key', () => {
+  const res = validateConnectAccountBody({ label: 'My Node', endpoint: 'https://cloud.appwrite.io/v1', project_id: 'proj1' });
+  assert.equal(res.isValid, false);
+  assert.equal(res.error, 'Missing required connection field: api_key.');
+});
+
+test('Connect Account - Rejects empty and whitespace-only values', () => {
+  const res = validateConnectAccountBody({ label: '   ', endpoint: 'https://cloud.appwrite.io/v1', project_id: 'proj1', api_key: 'key1' });
+  assert.equal(res.isValid, false);
+  assert.equal(res.error, 'Missing required connection field: label.');
+});
+
+test('Connect Account - Accepts valid canonical request payload', () => {
+  const payload = {
+    label: 'My Appwrite Account',
+    endpoint: 'https://sgp.cloud.appwrite.io/v1',
+    project_id: '6aeb5720003291868b64',
+    api_key: 'USER_PROVIDED_SECRET',
+    region: 'sgp'
+  };
+  const res = validateConnectAccountBody(payload);
+  assert.equal(res.isValid, true);
+  assert.equal(res.label, 'My Appwrite Account');
+  assert.equal(res.endpoint, 'https://sgp.cloud.appwrite.io/v1');
+  assert.equal(res.project_id, '6aeb5720003291868b64');
+  assert.equal(res.api_key, 'USER_PROVIDED_SECRET');
+  assert.equal(res.region, 'sgp');
+});
+
+test('Connect Account - Gracefully maps legacy/alias field names', () => {
+  const payload = {
+    label: 'Legacy Node',
+    endpoint: 'https://fra.cloud.appwrite.io/v1',
+    projectId: '6aeb5720003291868b64',
+    master_api_key: 'LEGACY_SECRET',
+    region: 'fra'
+  };
+  const res = validateConnectAccountBody(payload);
+  assert.equal(res.isValid, true);
+  assert.equal(res.project_id, '6aeb5720003291868b64');
+  assert.equal(res.api_key, 'LEGACY_SECRET');
+});
+
