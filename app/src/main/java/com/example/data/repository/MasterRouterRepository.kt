@@ -202,12 +202,12 @@ class MasterRouterRepository(
   }
 
   suspend fun getKeys(endpoint: String, apiKey: String, cookie: String): List<MasterApiKey> {
-    return try {
-      val api = createApi(endpoint, apiKey)
-      val res = api.getKeys(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
-      if (res.success && res.data != null) res.data else getMockKeys()
-    } catch (e: Exception) {
-      getMockKeys()
+    val api = createApi(endpoint, apiKey)
+    val res = api.getKeys(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
+    if (res.success && res.data != null) {
+      return res.data
+    } else {
+      throw Exception(res.error ?: "Failed to fetch API keys.")
     }
   }
 
@@ -242,20 +242,16 @@ class MasterRouterRepository(
   }
 
   suspend fun fetchAccounts(endpoint: String, apiKey: String, cookie: String): List<AppwriteAccount> {
-    return try {
-      val api = createApi(endpoint, apiKey)
-      val res = api.getAccounts(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
-      if (res.success && res.data != null) {
-        val entities = res.data.map {
-          AccountEntity(it.id, it.label, it.endpoint, it.region, it.status, it.projectsCount, it.lastVerified)
-        }
-        accountDao.insertAccounts(entities)
-        res.data
-      } else {
-        getMockAccounts()
+    val api = createApi(endpoint, apiKey)
+    val res = api.getAccounts(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
+    if (res.success && res.data != null) {
+      val entities = res.data.map {
+        AccountEntity(it.id, it.label, it.endpoint, it.region, it.status, it.projectsCount, it.lastVerified)
       }
-    } catch (e: Exception) {
-      getMockAccounts()
+      accountDao.insertAccounts(entities)
+      return res.data
+    } else {
+      throw Exception(res.error ?: "Failed to fetch connected accounts.")
     }
   }
 
@@ -266,109 +262,104 @@ class MasterRouterRepository(
     csrf: String,
     request: ConnectRequest
   ): AppwriteAccount {
-    return try {
-      val api = createApi(endpoint, apiKey)
-      val res = api.connectAccount(apiKey.ifEmpty { null }, cookie.ifEmpty { null }, csrf.ifEmpty { null }, request)
-      if (res.success && res.data != null) {
-        accountDao.insertAccount(
-          AccountEntity(res.data.id, res.data.label, res.data.endpoint, res.data.region, res.data.status, res.data.projectsCount, res.data.lastVerified)
-        )
-        res.data
-      } else {
-        throw Exception(res.error ?: "Failed to connect account")
-      }
-    } catch (e: Exception) {
-      val newAcc = AppwriteAccount(
-        id = "acc_${System.currentTimeMillis()}",
-        label = request.label,
-        endpoint = request.endpoint,
-        region = request.region,
-        status = "ACTIVE",
-        projectsCount = 2,
-        lastVerified = "Just now"
-      )
+    val api = createApi(endpoint, apiKey)
+    val res = api.connectAccount(apiKey.ifEmpty { null }, cookie.ifEmpty { null }, csrf.ifEmpty { null }, request)
+    if (res.success && res.data != null) {
       accountDao.insertAccount(
-        AccountEntity(newAcc.id, newAcc.label, newAcc.endpoint, newAcc.region, newAcc.status, newAcc.projectsCount, newAcc.lastVerified)
+        AccountEntity(res.data.id, res.data.label, res.data.endpoint, res.data.region, res.data.status, res.data.projectsCount, res.data.lastVerified)
       )
-      newAcc
+      return res.data
+    } else {
+      throw Exception(res.error ?: "Failed to connect account.")
     }
   }
 
   suspend fun getHealth(endpoint: String, apiKey: String, cookie: String): List<AccountHealth> {
-    return try {
-      val api = createApi(endpoint, apiKey)
-      val res = api.getHealth(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
-      if (res.success && res.data != null) res.data else getMockHealth()
-    } catch (e: Exception) {
-      getMockHealth()
+    val api = createApi(endpoint, apiKey)
+    val res = api.getHealth(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
+    if (res.success && res.data != null) {
+      return res.data
+    } else {
+      throw Exception(res.error ?: "Failed to fetch account health metrics.")
     }
   }
 
   suspend fun getUsage(endpoint: String, apiKey: String, cookie: String): UsageMetric {
-    return try {
-      val api = createApi(endpoint, apiKey)
-      val res = api.getUsage(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
-      if (res.success && res.data != null) res.data else getMockUsage()
-    } catch (e: Exception) {
-      getMockUsage()
+    val api = createApi(endpoint, apiKey)
+    val res = api.getUsage(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
+    if (res.success && res.data != null) {
+      return res.data
+    } else {
+      throw Exception(res.error ?: "Failed to fetch usage metrics.")
     }
   }
 
   suspend fun getProjects(endpoint: String, apiKey: String, cookie: String): List<ProjectNode> {
-    return try {
-      val api = createApi(endpoint, apiKey)
-      val res = api.getProjects(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
-      if (res.success && res.data != null) res.data else getMockProjects()
-    } catch (e: Exception) {
-      getMockProjects()
+    val api = createApi(endpoint, apiKey)
+    val res = api.getProjects(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
+    if (res.success && res.data != null) {
+      return res.data
+    } else {
+      throw Exception(res.error ?: "Failed to fetch project nodes.")
     }
   }
 
   suspend fun getRoutingRules(endpoint: String, apiKey: String, cookie: String): List<RoutingRule> {
-    return try {
-      val api = createApi(endpoint, apiKey)
-      val res = api.getRoutingRules(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
-      if (res.success && res.data != null) res.data else getMockRoutingRules()
-    } catch (e: Exception) {
-      getMockRoutingRules()
+    val api = createApi(endpoint, apiKey)
+    val res = api.getRoutingRules(apiKey.ifEmpty { null }, cookie.ifEmpty { null })
+    if (res.success && res.data != null) {
+      return res.data
+    } else {
+      throw Exception(res.error ?: "Failed to fetch routing rules.")
     }
   }
 
-  private fun getMockKeys() = listOf(
-    MasterApiKey("key_1", "Primary Master Admin", "umr_live_a1b2c3", "[\"*\"]", null, 600, 1, "2026-11-04", null),
-    MasterApiKey("key_2", "Mobile Client Gateway", "umr_live_998877", "[\"*\"]", null, 600, 1, "2026-11-04", null)
-  )
+  // Database Browser Methods
+  suspend fun getDatabases(endpoint: String, accountId: String, apiKey: String, cookie: String): List<com.example.data.model.AppwriteDatabase> {
+    val api = createApi(endpoint, apiKey)
+    val res = api.getDatabases(accountId, apiKey.ifEmpty { null }, cookie.ifEmpty { null })
+    if (res.success && res.data != null) return res.data else throw Exception(res.error ?: "Failed to fetch databases.")
+  }
 
-  private fun getMockAccounts() = listOf(
-    AppwriteAccount("acc_sgp_01", "Universal Production (SGP)", "https://sgp.cloud.appwrite.io/v1", "sgp", "ACTIVE", 4, "2 mins ago"),
-    AppwriteAccount("acc_fra_02", "EU Enterprise Hub (FRA)", "https://fra.cloud.appwrite.io/v1", "fra", "ACTIVE", 2, "5 mins ago"),
-    AppwriteAccount("acc_us_03", "US East Cluster (IAD)", "https://iad.cloud.appwrite.io/v1", "iad", "HEALTHY", 3, "10 mins ago")
-  )
+  suspend fun getCollections(endpoint: String, accountId: String, dbId: String, apiKey: String, cookie: String): List<com.example.data.model.AppwriteCollection> {
+    val api = createApi(endpoint, apiKey)
+    val res = api.getCollections(dbId, accountId, apiKey.ifEmpty { null }, cookie.ifEmpty { null })
+    if (res.success && res.data != null) return res.data else throw Exception(res.error ?: "Failed to fetch collections.")
+  }
 
-  private fun getMockHealth() = listOf(
-    AccountHealth("acc_sgp_01", "Universal Production (SGP)", "HEALTHY", 42, 34, 12.4),
-    AccountHealth("acc_fra_02", "EU Enterprise Hub (FRA)", "HEALTHY", 58, 62, 28.1),
-    AccountHealth("acc_us_03", "US East Cluster (IAD)", "WARNING", 112, 84, 45.9)
-  )
+  suspend fun getDocuments(endpoint: String, accountId: String, dbId: String, colId: String, apiKey: String, cookie: String): List<Map<String, Any?>> {
+    val api = createApi(endpoint, apiKey)
+    val res = api.getDocuments(dbId, colId, accountId, apiKey.ifEmpty { null }, cookie.ifEmpty { null })
+    if (res.success && res.data != null) return res.data else throw Exception(res.error ?: "Failed to fetch documents.")
+  }
 
-  private fun getMockUsage() = UsageMetric(
-    totalReadRequests = 1428500,
-    totalWriteRequests = 384200,
-    failedRequests = 124,
-    activeProjects = 9,
-    connectedAccounts = 3
-  )
+  suspend fun createDocument(
+    endpoint: String, accountId: String, dbId: String, colId: String,
+    docId: String?, data: Map<String, Any?>, apiKey: String, cookie: String, csrf: String
+  ): Map<String, Any?> {
+    val api = createApi(endpoint, apiKey)
+    val req = com.example.data.model.CreateDocumentApiRequest(docId, data)
+    val res = api.createDocument(dbId, colId, accountId, apiKey.ifEmpty { null }, cookie.ifEmpty { null }, csrf.ifEmpty { null }, req)
+    if (res.success && res.data != null) return res.data else throw Exception(res.error ?: "Failed to create document.")
+  }
 
-  private fun getMockProjects() = listOf(
-    ProjectNode("proj_6aeb57", "Universal Main", "acc_sgp_01", "sgp", "DEDICATED"),
-    ProjectNode("proj_auth_91", "Auth Service Hub", "acc_sgp_01", "sgp", "SHARED_POOL"),
-    ProjectNode("proj_eu_analytics", "EU Telemetry & Logs", "acc_fra_02", "fra", "DEDICATED"),
-    ProjectNode("proj_iad_store", "US Storefront", "acc_us_03", "iad", "SHARED_POOL")
-  )
+  suspend fun updateDocument(
+    endpoint: String, accountId: String, dbId: String, colId: String,
+    docId: String, data: Map<String, Any?>, apiKey: String, cookie: String, csrf: String
+  ): Map<String, Any?> {
+    val api = createApi(endpoint, apiKey)
+    val req = com.example.data.model.UpdateDocumentApiRequest(data)
+    val res = api.updateDocument(dbId, colId, docId, accountId, apiKey.ifEmpty { null }, cookie.ifEmpty { null }, csrf.ifEmpty { null }, req)
+    if (res.success && res.data != null) return res.data else throw Exception(res.error ?: "Failed to update document.")
+  }
 
-  private fun getMockRoutingRules() = listOf(
-    RoutingRule("rule_1", "tenant_enterprise", "DEDICATED", "proj_6aeb57"),
-    RoutingRule("rule_2", "tenant_standard", "SHARED_POOL", "proj_auth_91"),
-    RoutingRule("rule_3", "tenant_analytics", "DEDICATED", "proj_eu_analytics")
-  )
+  suspend fun deleteDocument(
+    endpoint: String, accountId: String, dbId: String, colId: String,
+    docId: String, apiKey: String, cookie: String, csrf: String
+  ) {
+    val api = createApi(endpoint, apiKey)
+    val res = api.deleteDocument(dbId, colId, docId, accountId, apiKey.ifEmpty { null }, cookie.ifEmpty { null }, csrf.ifEmpty { null })
+    if (!res.success) throw Exception(res.error ?: "Failed to delete document.")
+  }
 }
+

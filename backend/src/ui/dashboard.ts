@@ -285,6 +285,7 @@ export function renderDashboardHtml(): string {
       <div class="tabs-nav">
         <button class="tab-btn active" onclick="switchTab('accounts')">Connected Accounts</button>
         <button class="tab-btn" onclick="switchTab('projects')">Projects & Modes</button>
+        <button class="tab-btn" onclick="switchTab('databases')">Database Browser</button>
         <button class="tab-btn" onclick="switchTab('health')">Account Health & Quotas</button>
         <button class="tab-btn" onclick="switchTab('rules')">Routing Rules</button>
         <button class="tab-btn" onclick="switchTab('keys')">Master API Keys</button>
@@ -327,6 +328,44 @@ export function renderDashboardHtml(): string {
               </tr>
             </thead>
             <tbody id="projects-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tab Content: Database Browser -->
+      <div id="tab-databases" class="glass hidden" style="padding: 24px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <h3>Appwrite Database Browser</h3>
+          <button class="btn btn-primary" id="db-browser-create-doc-btn" onclick="openCreateDocumentModal()" disabled>+ Create Document</button>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px; margin-bottom:20px;">
+          <div>
+            <label>Select Connected Account</label>
+            <select id="db-account-select" onchange="onDbAccountChange()"><option value="">-- Choose Account --</option></select>
+          </div>
+          <div>
+            <label>Select Database</label>
+            <select id="db-database-select" onchange="onDbDatabaseChange()" disabled><option value="">-- Choose Database --</option></select>
+          </div>
+          <div>
+            <label>Select Collection</label>
+            <select id="db-collection-select" onchange="onDbCollectionChange()" disabled><option value="">-- Choose Collection --</option></select>
+          </div>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Document ID</th>
+                <th>Data Preview</th>
+                <th>Created At</th>
+                <th>Updated At</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="documents-tbody">
+              <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Select an account, database, and collection above to view documents.</td></tr>
+            </tbody>
           </table>
         </div>
       </div>
@@ -395,6 +434,95 @@ export function renderDashboardHtml(): string {
       </div>
     </div>
   </main>
+  <!-- Connect Account Modal -->
+  <div id="add-account-modal" class="modal-overlay hidden">
+    <div class="glass modal">
+      <h2 style="margin-bottom: 8px;">Connect Appwrite Account</h2>
+      <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:20px;">Enter the Appwrite endpoint and master API key to add an upstream node.</p>
+      <form id="add-account-form" onsubmit="handleConnectAccount(event)">
+        <div class="form-group">
+          <label>Account Label</label>
+          <input type="text" id="acc-label" required placeholder="Production Cloud SGP">
+        </div>
+        <div class="form-group">
+          <label>Endpoint URL</label>
+          <input type="url" id="acc-endpoint" required placeholder="https://sgp.cloud.appwrite.io/v1">
+        </div>
+        <div class="form-group">
+          <label>Master Appwrite API Key</label>
+          <input type="password" id="acc-key" required placeholder="Standard or Master Key">
+        </div>
+        <div class="form-group">
+          <label>Region</label>
+          <select id="acc-region">
+            <option value="us-east">US East</option>
+            <option value="eu-west">EU West</option>
+            <option value="ap-south">Asia Pacific (SGP)</option>
+          </select>
+        </div>
+        <div id="add-acc-error" style="color:var(--danger); font-size:0.85rem; margin-bottom:12px;"></div>
+        <div style="display:flex; gap:12px;">
+          <button type="button" class="btn btn-outline" style="flex:1; justify-content:center;" onclick="closeAddAccountModal()">Cancel</button>
+          <button type="submit" id="add-acc-submit" class="btn btn-primary" style="flex:1; justify-content:center;">Verify & Connect</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Add Rule Modal -->
+  <div id="add-rule-modal" class="modal-overlay hidden">
+    <div class="glass modal">
+      <h2 style="margin-bottom: 8px;">New Routing Rule</h2>
+      <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:20px;">Bind a tenant ID or pattern to a specific target project or strategy.</p>
+      <form id="add-rule-form" onsubmit="handleCreateRule(event)">
+        <div class="form-group">
+          <label>Tenant ID / Pattern</label>
+          <input type="text" id="rule-tenant-id" required placeholder="tenant-123 or *">
+        </div>
+        <div class="form-group">
+          <label>Strategy</label>
+          <select id="rule-strategy">
+            <option value="DIRECT">DIRECT</option>
+            <option value="ROUND_ROBIN">ROUND_ROBIN</option>
+            <option value="LEAST_LATENCY">LEAST_LATENCY</option>
+            <option value="FAILOVER">FAILOVER</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Target Project ID (for DIRECT)</label>
+          <input type="text" id="rule-target-project" placeholder="6aeb5720003291868b64">
+        </div>
+        <div id="add-rule-error" style="color:var(--danger); font-size:0.85rem; margin-bottom:12px;"></div>
+        <div style="display:flex; gap:12px;">
+          <button type="button" class="btn btn-outline" style="flex:1; justify-content:center;" onclick="closeAddRuleModal()">Cancel</button>
+          <button type="submit" id="add-rule-submit" class="btn btn-primary" style="flex:1; justify-content:center;">Save Rule</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Document Edit/Create Modal -->
+  <div id="doc-modal" class="modal-overlay hidden">
+    <div class="glass modal" style="max-width:560px;">
+      <h2 style="margin-bottom: 8px;" id="doc-modal-title">Create Document</h2>
+      <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:20px;">Provide Document ID and JSON payload.</p>
+      <form id="doc-form" onsubmit="saveDocument(event)">
+        <div class="form-group">
+          <label>Document ID (leave blank for unique ID)</label>
+          <input type="text" id="doc-id" placeholder="unique()">
+        </div>
+        <div class="form-group">
+          <label>JSON Data Attributes</label>
+          <textarea id="doc-data" style="width:100%; height:180px; background:rgba(0,0,0,0.3); border:1px solid var(--card-border); border-radius:8px; color:white; font-family:'JetBrains Mono',monospace; padding:12px; font-size:0.85rem; outline:none;" placeholder='{\n  "title": "Sample Document",\n  "status": "active"\n}'></textarea>
+        </div>
+        <div id="doc-modal-error" style="color:var(--danger); font-size:0.85rem; margin-bottom:12px;"></div>
+        <div style="display:flex; gap:12px;">
+          <button type="button" class="btn btn-outline" style="flex:1; justify-content:center;" onclick="closeDocumentModal()">Cancel</button>
+          <button type="submit" id="doc-modal-submit" class="btn btn-primary" style="flex:1; justify-content:center;">Save Document</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- Error Modal with Retry -->
   <div id="error-modal" class="modal-overlay hidden">
@@ -633,6 +761,12 @@ export function renderDashboardHtml(): string {
       loadAllData();
     }
 
+    let loadedAccounts = [];
+    let selectedAccountId = '';
+    let selectedDbId = '';
+    let selectedColId = '';
+    let editingDocId = null;
+
     async function loadAllData() {
       const [usageRes, accountsRes, projectsRes, healthRes, rulesRes, keysRes] = await Promise.all([
         fetch('/v1/usage'),
@@ -652,7 +786,9 @@ export function renderDashboardHtml(): string {
       }
 
       const accounts = await accountsRes.json();
-      renderAccounts(accounts.data || []);
+      loadedAccounts = accounts.data || [];
+      renderAccounts(loadedAccounts);
+      populateDbAccountDropdown(loadedAccounts);
 
       const projects = await projectsRes.json();
       renderProjects(projects.data || []);
@@ -738,12 +874,288 @@ export function renderDashboardHtml(): string {
     }
 
     function switchTab(name) {
-      ['accounts', 'projects', 'health', 'rules', 'keys'].forEach(t => {
-        document.getElementById('tab-' + t).classList.add('hidden');
+      ['accounts', 'projects', 'databases', 'health', 'rules', 'keys'].forEach(t => {
+        const el = document.getElementById('tab-' + t);
+        if (el) el.classList.add('hidden');
       });
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.getElementById('tab-' + name).classList.remove('hidden');
-      event.target.classList.add('active');
+      const activeTab = document.getElementById('tab-' + name);
+      if (activeTab) activeTab.classList.remove('hidden');
+      if (window.event && window.event.target) window.event.target.classList.add('active');
+    }
+
+    /* Modals & Handlers */
+    function openAddAccountModal() { document.getElementById('add-account-modal').classList.remove('hidden'); }
+    function closeAddAccountModal() { document.getElementById('add-account-modal').classList.add('hidden'); document.getElementById('add-acc-error').innerText = ''; }
+    async function handleConnectAccount(e) {
+      e.preventDefault();
+      const errBox = document.getElementById('add-acc-error');
+      errBox.innerText = '';
+      const label = document.getElementById('acc-label').value.trim();
+      const endpoint = document.getElementById('acc-endpoint').value.trim();
+      const master_api_key = document.getElementById('acc-key').value.trim();
+      const region = document.getElementById('acc-region').value;
+      const btn = document.getElementById('add-acc-submit');
+
+      btn.disabled = true;
+      btn.innerText = 'Verifying...';
+
+      try {
+        const res = await fetch('/v1/accounts/manual', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': currentCsrfToken },
+          body: JSON.stringify({ label, endpoint, master_api_key, region })
+        });
+        const data = await res.json();
+        if (data.success) {
+          closeAddAccountModal();
+          loadAllData();
+        } else {
+          errBox.innerText = data.error || 'Failed to connect Appwrite account.';
+        }
+      } catch (err) {
+        errBox.innerText = 'Error: ' + err.message;
+      } finally {
+        btn.disabled = false;
+        btn.innerText = 'Verify & Connect';
+      }
+    }
+
+    function openAddRuleModal() { document.getElementById('add-rule-modal').classList.remove('hidden'); }
+    function closeAddRuleModal() { document.getElementById('add-rule-modal').classList.add('hidden'); document.getElementById('add-rule-error').innerText = ''; }
+    async function handleCreateRule(e) {
+      e.preventDefault();
+      const errBox = document.getElementById('add-rule-error');
+      errBox.innerText = '';
+      const tenant_id = document.getElementById('rule-tenant-id').value.trim();
+      const strategy = document.getElementById('rule-strategy').value;
+      const target_project_id = document.getElementById('rule-target-project').value.trim();
+      const btn = document.getElementById('add-rule-submit');
+
+      btn.disabled = true;
+      try {
+        const res = await fetch('/v1/routing/rules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': currentCsrfToken },
+          body: JSON.stringify({ tenant_id, strategy, target_project_id: target_project_id || undefined })
+        });
+        const data = await res.json();
+        if (data.success) {
+          closeAddRuleModal();
+          loadAllData();
+        } else {
+          errBox.innerText = data.error || 'Failed to save rule.';
+        }
+      } catch (err) {
+        errBox.innerText = 'Error: ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    /* Database Browser Handlers */
+    function populateDbAccountDropdown(accounts) {
+      const select = document.getElementById('db-account-select');
+      select.innerHTML = '<option value="">-- Choose Account --</option>' + 
+        accounts.map(a => \`<option value="\${a.id}">\${a.label} (\${a.endpoint})</option>\`).join('');
+    }
+
+    async function onDbAccountChange() {
+      selectedAccountId = document.getElementById('db-account-select').value;
+      const dbSelect = document.getElementById('db-database-select');
+      const colSelect = document.getElementById('db-collection-select');
+      const createBtn = document.getElementById('db-browser-create-doc-btn');
+
+      dbSelect.disabled = true;
+      dbSelect.innerHTML = '<option value="">Loading Databases...</option>';
+      colSelect.disabled = true;
+      colSelect.innerHTML = '<option value="">-- Choose Collection --</option>';
+      createBtn.disabled = true;
+      document.getElementById('documents-tbody').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Select a database and collection.</td></tr>';
+
+      if (!selectedAccountId) return;
+
+      try {
+        const res = await fetch('/v1/databases?account_id=' + selectedAccountId);
+        const data = await res.json();
+        if (data.success && data.data) {
+          dbSelect.innerHTML = '<option value="">-- Choose Database --</option>' +
+            data.data.map(d => \`<option value="\${d.\$id}">\${d.name} (\${d.\$id})</option>\`).join('');
+          dbSelect.disabled = false;
+        } else {
+          dbSelect.innerHTML = '<option value="">Error loading databases</option>';
+        }
+      } catch (e) {
+        dbSelect.innerHTML = '<option value="">Error: ' + e.message + '</option>';
+      }
+    }
+
+    async function onDbDatabaseChange() {
+      selectedDbId = document.getElementById('db-database-select').value;
+      const colSelect = document.getElementById('db-collection-select');
+      const createBtn = document.getElementById('db-browser-create-doc-btn');
+
+      colSelect.disabled = true;
+      colSelect.innerHTML = '<option value="">Loading Collections...</option>';
+      createBtn.disabled = true;
+
+      if (!selectedDbId) return;
+
+      try {
+        const res = await fetch('/v1/databases/' + selectedDbId + '/collections?account_id=' + selectedAccountId);
+        const data = await res.json();
+        if (data.success && data.data) {
+          colSelect.innerHTML = '<option value="">-- Choose Collection --</option>' +
+            data.data.map(c => \`<option value="\${c.\$id}">\${c.name} (\${c.\$id})</option>\`).join('');
+          colSelect.disabled = false;
+        } else {
+          colSelect.innerHTML = '<option value="">Error loading collections</option>';
+        }
+      } catch (e) {
+        colSelect.innerHTML = '<option value="">Error: ' + e.message + '</option>';
+      }
+    }
+
+    async function onDbCollectionChange() {
+      selectedColId = document.getElementById('db-collection-select').value;
+      const createBtn = document.getElementById('db-browser-create-doc-btn');
+
+      if (!selectedColId) {
+        createBtn.disabled = true;
+        return;
+      }
+      createBtn.disabled = false;
+      await loadDocuments();
+    }
+
+    async function loadDocuments() {
+      const tbody = document.getElementById('documents-tbody');
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Loading Documents...</td></tr>';
+
+      try {
+        const res = await fetch('/v1/databases/' + selectedDbId + '/collections/' + selectedColId + '/documents?account_id=' + selectedAccountId);
+        const data = await res.json();
+        if (data.success && data.data) {
+          if (data.data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No documents found in this collection.</td></tr>';
+            return;
+          }
+          tbody.innerHTML = data.data.map(doc => {
+            const preview = { ...doc };
+            delete preview.\$id; delete preview.\$collectionId; delete preview.\$databaseId; delete preview.\$createdAt; delete preview.\$updatedAt; delete preview.\$permissions;
+            return \`
+              <tr>
+                <td class="mono"><strong>\${doc.\$id}</strong></td>
+                <td class="mono" style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">\${JSON.stringify(preview)}</td>
+                <td>\${new Date(doc.\$createdAt).toLocaleString()}</td>
+                <td>\${new Date(doc.\$updatedAt).toLocaleString()}</td>
+                <td>
+                  <button class="btn btn-outline" style="padding:4px 8px; font-size:0.75rem;" onclick="openEditDocumentModal('\${doc.\$id}', '\${encodeURIComponent(JSON.stringify(preview))}')">Edit</button>
+                  <button class="btn btn-danger" style="padding:4px 8px; font-size:0.75rem;" onclick="deleteDocument('\${doc.\$id}')">Delete</button>
+                </td>
+              </tr>
+            \`;
+          }).join('');
+        } else {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--danger);">Failed to load documents: ' + (data.error || 'Unknown error') + '</td></tr>';
+        }
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--danger);">Error: ' + e.message + '</td></tr>';
+      }
+    }
+
+    function openCreateDocumentModal() {
+      editingDocId = null;
+      document.getElementById('doc-modal-title').innerText = 'Create Document';
+      document.getElementById('doc-id').value = '';
+      document.getElementById('doc-id').disabled = false;
+      document.getElementById('doc-data').value = '{\\n  "title": "New Item"\\n}';
+      document.getElementById('doc-modal-error').innerText = '';
+      document.getElementById('doc-modal').classList.remove('hidden');
+    }
+
+    function openEditDocumentModal(id, encodedJson) {
+      editingDocId = id;
+      document.getElementById('doc-modal-title').innerText = 'Edit Document (' + id + ')';
+      document.getElementById('doc-id').value = id;
+      document.getElementById('doc-id').disabled = true;
+      try {
+        const parsed = JSON.parse(decodeURIComponent(encodedJson));
+        document.getElementById('doc-data').value = JSON.stringify(parsed, null, 2);
+      } catch (e) {
+        document.getElementById('doc-data').value = '{}';
+      }
+      document.getElementById('doc-modal-error').innerText = '';
+      document.getElementById('doc-modal').classList.remove('hidden');
+    }
+
+    function closeDocumentModal() {
+      document.getElementById('doc-modal').classList.add('hidden');
+    }
+
+    async function saveDocument(e) {
+      e.preventDefault();
+      const errBox = document.getElementById('doc-modal-error');
+      errBox.innerText = '';
+      const docIdInput = document.getElementById('doc-id').value.trim();
+      const rawData = document.getElementById('doc-data').value.trim();
+
+      let parsedData;
+      try {
+        parsedData = JSON.parse(rawData);
+      } catch (err) {
+        errBox.innerText = 'Invalid JSON syntax in attributes.';
+        return;
+      }
+
+      const btn = document.getElementById('doc-modal-submit');
+      btn.disabled = true;
+
+      try {
+        let res;
+        if (editingDocId) {
+          res = await fetch('/v1/databases/' + selectedDbId + '/collections/' + selectedColId + '/documents/' + editingDocId + '?account_id=' + selectedAccountId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': currentCsrfToken },
+            body: JSON.stringify({ data: parsedData })
+          });
+        } else {
+          res = await fetch('/v1/databases/' + selectedDbId + '/collections/' + selectedColId + '/documents?account_id=' + selectedAccountId, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': currentCsrfToken },
+            body: JSON.stringify({ document_id: docIdInput || undefined, data: parsedData })
+          });
+        }
+        const data = await res.json();
+        if (data.success) {
+          closeDocumentModal();
+          await loadDocuments();
+        } else {
+          errBox.innerText = data.error || 'Failed to save document.';
+        }
+      } catch (err) {
+        errBox.innerText = 'Error: ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function deleteDocument(docId) {
+      if (!confirm('Are you sure you want to delete document ' + docId + '?')) return;
+      try {
+        const res = await fetch('/v1/databases/' + selectedDbId + '/collections/' + selectedColId + '/documents/' + docId + '?account_id=' + selectedAccountId, {
+          method: 'DELETE',
+          headers: { 'X-CSRF-Token': currentCsrfToken }
+        });
+        const data = await res.json();
+        if (data.success) {
+          await loadDocuments();
+        } else {
+          alert('Failed to delete document: ' + (data.error || 'Unknown error'));
+        }
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
     }
 
     async function openCreateKeyModal() {

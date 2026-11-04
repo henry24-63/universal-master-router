@@ -146,3 +146,29 @@ data class CreateKeyResponse(
   @Json(name = "prefix") val prefix: String,
   @Json(name = "is_admin") val isAdmin: Boolean
 )
+
+// Appwrite Database Browser DTOs
+@JsonClass(generateAdapter = true)
+data class AppwriteDatabase(
+  @Json(name = "\$id") val id: String,
+  @Json(name = "name") val name: String
+)
+
+@JsonClass(generateAdapter = true)
+data class AppwriteCollection(
+  @Json(name = "\$id") val id: String,
+  @Json(name = "name") val name: String,
+  @Json(name = "databaseId") val databaseId: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class CreateDocumentApiRequest(
+  @Json(name = "document_id") val documentId: String? = null,
+  @Json(name = "data") val data: Map<String, Any?>
+)
+
+@JsonClass(generateAdapter = true)
+data class UpdateDocumentApiRequest(
+  @Json(name = "data") val data: Map<String, Any?>
+)
+

@@ -272,4 +272,107 @@ class MasterRouterViewModel(application: Application) : AndroidViewModel(applica
       }
     }
   }
+
+  // Database Browser ViewModel State & Actions
+  private val _databases = MutableStateFlow<List<com.example.data.model.AppwriteDatabase>>(emptyList())
+  val databases: StateFlow<List<com.example.data.model.AppwriteDatabase>> = _databases.asStateFlow()
+
+  private val _collections = MutableStateFlow<List<com.example.data.model.AppwriteCollection>>(emptyList())
+  val collections: StateFlow<List<com.example.data.model.AppwriteCollection>> = _collections.asStateFlow()
+
+  private val _documents = MutableStateFlow<List<Map<String, Any?>>>(emptyList())
+  val documents: StateFlow<List<Map<String, Any?>>> = _documents.asStateFlow()
+
+  fun fetchDatabases(accountId: String) {
+    viewModelScope.launch {
+      _isLoading.value = true
+      _databases.value = emptyList()
+      _collections.value = emptyList()
+      _documents.value = emptyList()
+      try {
+        _databases.value = repository.getDatabases(endpoint.value, accountId, apiKey.value, sessionCookie.value)
+      } catch (e: Exception) {
+        _errorMessage.value = e.localizedMessage ?: "Failed to fetch databases."
+      } finally {
+        _isLoading.value = false
+      }
+    }
+  }
+
+  fun fetchCollections(accountId: String, dbId: String) {
+    viewModelScope.launch {
+      _isLoading.value = true
+      _collections.value = emptyList()
+      _documents.value = emptyList()
+      try {
+        _collections.value = repository.getCollections(endpoint.value, accountId, dbId, apiKey.value, sessionCookie.value)
+      } catch (e: Exception) {
+        _errorMessage.value = e.localizedMessage ?: "Failed to fetch collections."
+      } finally {
+        _isLoading.value = false
+      }
+    }
+  }
+
+  fun fetchDocuments(accountId: String, dbId: String, colId: String) {
+    viewModelScope.launch {
+      _isLoading.value = true
+      _documents.value = emptyList()
+      try {
+        _documents.value = repository.getDocuments(endpoint.value, accountId, dbId, colId, apiKey.value, sessionCookie.value)
+      } catch (e: Exception) {
+        _errorMessage.value = e.localizedMessage ?: "Failed to fetch documents."
+      } finally {
+        _isLoading.value = false
+      }
+    }
+  }
+
+  fun createDocumentInDb(accountId: String, dbId: String, colId: String, docId: String?, dataMap: Map<String, Any?>, onSuccess: () -> Unit) {
+    viewModelScope.launch {
+      _isLoading.value = true
+      try {
+        repository.createDocument(endpoint.value, accountId, dbId, colId, docId, dataMap, apiKey.value, sessionCookie.value, csrfToken.value)
+        _successMessage.value = "Document created successfully!"
+        fetchDocuments(accountId, dbId, colId)
+        onSuccess()
+      } catch (e: Exception) {
+        _errorMessage.value = e.localizedMessage ?: "Failed to create document."
+      } finally {
+        _isLoading.value = false
+      }
+    }
+  }
+
+  fun updateDocumentInDb(accountId: String, dbId: String, colId: String, docId: String, dataMap: Map<String, Any?>, onSuccess: () -> Unit) {
+    viewModelScope.launch {
+      _isLoading.value = true
+      try {
+        repository.updateDocument(endpoint.value, accountId, dbId, colId, docId, dataMap, apiKey.value, sessionCookie.value, csrfToken.value)
+        _successMessage.value = "Document updated successfully!"
+        fetchDocuments(accountId, dbId, colId)
+        onSuccess()
+      } catch (e: Exception) {
+        _errorMessage.value = e.localizedMessage ?: "Failed to update document."
+      } finally {
+        _isLoading.value = false
+      }
+    }
+  }
+
+  fun deleteDocumentInDb(accountId: String, dbId: String, colId: String, docId: String) {
+    viewModelScope.launch {
+      _isLoading.value = true
+      try {
+        repository.deleteDocument(endpoint.value, accountId, dbId, colId, docId, apiKey.value, sessionCookie.value, csrfToken.value)
+        _successMessage.value = "Document deleted."
+        fetchDocuments(accountId, dbId, colId)
+      } catch (e: Exception) {
+        _errorMessage.value = e.localizedMessage ?: "Failed to delete document."
+      } finally {
+        _isLoading.value = false
+      }
+    }
+  }
 }
+

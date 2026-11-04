@@ -1,108 +1,125 @@
-# Phase 2.6 — Secure Admin Login & Embedded Dashboard System Plan
+# Phase 2.11 — Implementation Plan: Universal Appwrite Master Router Real Backend & End-to-End Integration
 
-## Summary
-Implementation plan for the complete administrator authentication system, PBKDF2 password hashing with per-user cryptographic salts, atomic first-admin registration, HttpOnly/Secure/SameSite cookie sessions, CSRF token validation, and an embedded responsive glassmorphism Single Page Application (SPA) dashboard served directly from Cloudflare Worker without separate hosting.
+## 1. Overview & Core Objectives
 
----
+This phase transforms the **Universal Appwrite Master Router** into a production-grade control plane and multi-tenant router with **100% real Appwrite upstream communications**, eliminating all mock fallbacks, hardcoded metrics, and placeholder UI handlers across both the Cloudflare Worker backend, the Web SPA Dashboard, and the Native Android App.
 
-## User Review & Critical Decisions
-
-> [!IMPORTANT]
-> - **Dashboard Hosting**: Embedded SPA dashboard served directly by the Cloudflare Worker at `/` and `/admin` with modern glassmorphism styling, zero external static hosting dependencies.
-> - **Password Hashing**: PBKDF2 with 100,000 rounds of SHA-256 and unique 16-byte random salt per administrator in D1 (`admin_users` table).
-> - **Dual Authentication Layer**:
->   - *Dashboard requests*: Secure `HttpOnly; Secure; SameSite=Strict` cookie (`umr_session`) with CSRF header check.
->   - *API & Mobile requests*: `X-Master-API-Key` header with constant-time SHA-256 hash lookup in `api_keys`.
->   - Both mechanisms share the same underlying controllers and data layer.
-> - **Zero Exposure Guarantee**: Internal API keys and passwords are never sent to browser storage (`localStorage`/`sessionStorage`), code, or logs.
+### Verified User Selections
+- **Proxy Architecture**: `/v1/proxy/*` transparent routing with `X-Appwrite-Project` and `X-Master-API-Key` headers.
+- **Database Browser Mode**: Full Read & Write support with document creation, editing, and deletion across both Web and Android.
 
 ---
 
-## 1. Architectural Model & Session Flow
+## 2. Architecture & File Structure
 
 ```
-┌────────────────────────────────────────────────────────┐
-│               Admin Web Browser (Desktop/Mobile)       │
-└──────────────────────────┬─────────────────────────────┘
-                           │ 1. GET / (Serves Glassmorphism Dashboard)
-                           │ 2. POST /v1/auth/login (email + password)
-┌──────────────────────────▼─────────────────────────────┐
-│             Cloudflare Worker (Auth Layer)             │
-│ ┌────────────────────────────────────────────────────┐ │
-│ │ Session & Cookie Manager (HttpOnly; Secure; Strict)│ │
-│ ├────────────────────────────────────────────────────┤ │
-│ │ PBKDF2 Password Verifier (100k rounds + Salt)      │ │
-│ ├────────────────────────────────────────────────────┤ │
-│ │ Dual-Auth Bridge: Resolves Session Cookie or Key   │ │
-│ └────────────────────────────────────────────────────┘ │
-└────────────┬─────────────────────────────┬─────────────┘
-             │ SQL Queries                 │ Session Lookups
-┌────────────▼─────────────┐ ┌─────────────▼─────────────┐
-│       Cloudflare D1      │ │      Cloudflare KV        │
-│    (admin_users,         │ │    (Sliding window rate   │
-│     admin_sessions)      │ │     limits & sessions)    │
-└──────────────────────────┘ └───────────────────────────┘
+backend/
+├── src/
+│   ├── appwrite/
+│   │   └── client.ts         [NEW] Centralized Appwrite REST Client (SSRF safe, AES decrypted key)
+│   ├── crypto/
+│   │   ├── auth.ts           PBKDF2 authentication & session tokens
+│   │   ├── keys.ts           SHA-256 API key hashing & generation
+│   │   └── vault.ts          AES-256-GCM secret vault
+│   ├── router/
+│   │   └── engine.ts         Routing decision engine (DEDICATED, SHARED_POOL, HYBRID)
+│   ├── ui/
+│   │   └── dashboard.ts      Glassmorphism Web SPA (Modal handlers, Database Browser tab)
+│   └── index.ts              Cloudflare Worker main entry point & API routes
+├── migrations/
+│   ├── 0001_initial_schema.sql
+│   └── 0002_admin_auth.sql
+└── tests/
+    ├── admin_auth.test.mjs
+    ├── api.test.mjs
+    ├── appwrite_client.test.mjs [NEW]
+    ├── router.test.mjs
+    └── vault.test.mjs
+
+app/src/main/java/com/example/
+├── data/
+│   ├── api/MasterRouterApi.kt [Updated Retrofit endpoints for DB & Proxy]
+│   ├── model/MasterRouterModels.kt [Updated DTOs for Database Browser CRUD]
+│   ├── repository/MasterRouterRepository.kt [Mock fallbacks removed; real errors propagated]
+│   └── security/SecureStorageManager.kt [Keystore-backed token storage]
+└── ui/
+    ├── screens/
+    │   ├── AccountsScreen.kt [Real Add/Test Account actions]
+    │   ├── ApiKeysScreen.kt [Real Key generation & revocation]
+    │   ├── DatabaseBrowserScreen.kt [Real Account -> DB -> Collection -> Document CRUD UI]
+    │   ├── RoutingRulesScreen.kt [Real Rule creation & deletion]
+    │   └── SettingsScreen.kt [Worker URL & Admin logout]
+    └── viewmodel/MasterRouterViewModel.kt
 ```
 
 ---
 
-## 2. D1 Schema Migration (`backend/migrations/0002_admin_auth.sql`)
+## 3. Detailed Implementation Steps
 
-1. `admin_users`:
-   - `id TEXT PRIMARY KEY`
-   - `email TEXT NOT NULL UNIQUE`
-   - `password_hash TEXT NOT NULL`
-   - `password_salt TEXT NOT NULL`
-   - `name TEXT NOT NULL`
-   - `is_owner INTEGER DEFAULT 0`
-   - `created_at TEXT NOT NULL DEFAULT (datetime('now'))`
-2. `admin_sessions`:
-   - `id TEXT PRIMARY KEY` (cryptographically random 32-byte token)
-   - `user_id TEXT NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE`
-   - `csrf_token TEXT NOT NULL`
-   - `expires_at TEXT NOT NULL`
-   - `created_at TEXT NOT NULL DEFAULT (datetime('now'))`
+### Step 1: Centralized Appwrite Upstream HTTP Client (`backend/src/appwrite/client.ts`)
+- **SSRF Protection**: Sanitize all incoming Appwrite endpoint URLs. Strictly enforce `https://` protocol and reject `localhost`, `127.0.0.1`, private RFC 1918 IPv4 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local, or cloud metadata endpoints (`169.254.169.254`).
+- **AES Decryption**: Decrypt stored API keys using `CredentialVault(env.ENCRYPTION_MASTER_KEY)`.
+- **Request Execution**: Execute `fetch()` with `X-Appwrite-Project`, `X-Appwrite-Key`, and `Content-Type: application/json`.
+- **AbortController & Latency Measurement**: Timeout requests after 10 seconds and return exact network latency in milliseconds.
+- **Appwrite Methods**:
+  - `verifyConnection(endpoint, projectId, apiKey)`: Tests connection via `/health/time` or `/projects`.
+  - `listDatabases(endpoint, projectId, apiKey)`: Returns list of databases.
+  - `listCollections(endpoint, projectId, apiKey, dbId)`: Returns collections for database.
+  - `listDocuments(endpoint, projectId, apiKey, dbId, colId, limit, offset)`: Returns documents.
+  - `createDocument(endpoint, projectId, apiKey, dbId, colId, docId, data)`: Creates new document.
+  - `updateDocument(endpoint, projectId, apiKey, dbId, colId, docId, data)`: Updates existing document.
+  - `deleteDocument(endpoint, projectId, apiKey, dbId, colId, docId)`: Deletes document.
+
+### Step 2: Real Appwrite Account Connection & Health Testing (`backend/src/index.ts`)
+- **`POST /v1/accounts/manual`**: Validates credentials via `AppwriteClient.verifyConnection()` before inserting into D1 `connected_accounts`. Rejects invalid API keys with HTTP 400.
+- **`POST /v1/accounts/:id/test`**: Executes real HTTPS health probe against Appwrite, measures true ping latency, and updates `account_health` and `connected_accounts.last_verified` in D1.
+
+### Step 3: Database Browser Endpoints & Proxy Router
+- **Database Browser REST API**:
+  - `GET /v1/databases?account_id={id}`
+  - `GET /v1/databases/:dbId/collections?account_id={id}`
+  - `GET /v1/databases/:dbId/collections/:colId/documents?account_id={id}`
+  - `POST /v1/databases/:dbId/collections/:colId/documents?account_id={id}`
+  - `PUT /v1/databases/:dbId/collections/:colId/documents/:docId?account_id={id}`
+  - `DELETE /v1/databases/:dbId/collections/:colId/documents/:docId?account_id={id}`
+- **Transparent Router Proxy (`/v1/proxy/*`)**:
+  - Validates `X-Master-API-Key` or session cookie.
+  - Resolves tenant and applies `RoutingEngine` strategy (`DEDICATED`, `SHARED_POOL`, `HYBRID`) to pick target account.
+  - Transparently forwards HTTP request and body to `{targetAccount.endpoint}/{path}` with decrypted `X-Appwrite-Key`.
+  - Records request metrics into `usage_metrics` (read vs write classification).
+
+### Step 4: Web SPA Dashboard Modal Handlers & Database Browser (`backend/src/ui/dashboard.ts`)
+- **Connect Account Modal**: Implement `openAddAccountModal()`, `closeAddAccountModal()`, and `handleConnectAccount(e)` submitting to `POST /v1/accounts/manual`.
+- **New Routing Rule Modal**: Implement `openAddRuleModal()`, `closeAddRuleModal()`, and `handleCreateRule(e)` with dynamic project selection from `GET /v1/projects`.
+- **Web Database Browser Tab**: Add interactive account/database/collection/document inspector with document editing and creation modals.
+
+### Step 5: Eliminate Android Repository Mock Fallbacks & Upgrade App UI
+- **`MasterRouterRepository.kt`**: Remove `getMockAccounts()`, `getMockHealth()`, `getMockUsage()`, `getMockProjects()`, `getMockRoutingRules()`, `getMockKeys()`. Propagate real network and HTTP error messages.
+- **`DatabaseBrowserScreen.kt`**: Implement 4-tier navigation:
+  1. Select Connected Account.
+  2. Select Database.
+  3. Select Collection.
+  4. View/Create/Edit/Delete Documents with JSON property editor.
+
+### Step 6: Real Usage Metering & Health Probing
+- Middleware logs every routed proxy request into D1 `usage_metrics` (`read_requests`, `write_requests`, `failed_requests`).
+- `GET /v1/usage` sums real traffic from D1.
 
 ---
 
-## 3. Endpoints & UI Views
+## 4. Verification & Testing Strategy
 
-| Endpoint | Method | Purpose |
-|---|---|---|
-| `/` | `GET` | Serves the full glassmorphism admin dashboard SPA HTML/CSS/JS |
-| `/v1/auth/setup` | `POST` | First-time atomic setup (only succeeds if `admin_users` table is empty) |
-| `/v1/auth/setup-status` | `GET` | Returns whether initial owner setup is required (`has_admin: boolean`) |
-| `/v1/auth/login` | `POST` | Authenticates email/password, issues `umr_session` cookie + CSRF token |
-| `/v1/auth/logout` | `POST` | Invalidates session in D1 and clears cookie |
-| `/v1/auth/me` | `GET` | Returns authenticated user profile and CSRF token |
-
----
-
-## 4. Security Hardening & Rate Limiting
-
-- **Brute Force Protection**: Failed login tracking per IP / email in KV with exponential lockout after 5 consecutive failures.
-- **CSRF Token Guard**: State-changing requests (`POST`, `PUT`, `DELETE`, `PATCH`) using cookie authentication must provide matching `X-CSRF-Token` header.
-- **Atomic Single-Owner Setup**:
-  ```sql
-  INSERT INTO admin_users (id, email, password_hash, password_salt, name, is_owner)
-  SELECT ?, ?, ?, ?, ?, 1
-  WHERE (SELECT count(*) FROM admin_users) = 0;
-  ```
-  Ensures only one owner can ever be initialized through the setup flow.
+1. **Backend Test Suite (`npm --prefix backend test`)**:
+   - `appwrite_client.test.mjs`: Tests SSRF protection, URL normalization, and mock server HTTP calls.
+   - `api.test.mjs`: Tests real database CRUD, account verification, and `/v1/proxy/*` routing.
+   - Total expected passing tests: $\ge 30$.
+2. **Android App Compilation & Tests**:
+   - `compile_applet`: Clean Android compilation.
+   - `gradle :app:testDebugUnitTest`: Execution of all Robolectric and unit tests.
 
 ---
 
-## 5. Verification Roadmap
-
-1. Implement password hashing & session token utilities (`backend/src/crypto/auth.ts`).
-2. Add migration `0002_admin_auth.sql`.
-3. Integrate dual authentication (Cookie + `X-Master-API-Key`) into `backend/src/index.ts`.
-4. Embed the enterprise glassmorphism Dashboard SPA into the Worker.
-5. Create automated test suite in `backend/tests/admin_auth.test.mjs` verifying:
-   - Atomic setup
-   - Successful login/logout
-   - Wrong password rejection
-   - Session expiration
-   - CSRF validation
-   - Existing API key backwards compatibility
-6. Verify Android app compilation and unit tests.
+## 5. Security Invariants
+- **No Plaintext API Keys**: Appwrite API keys are encrypted at rest with AES-256-GCM. Decrypted keys never leave the Worker environment.
+- **SSRF Defense**: Strict URL validation prevents SSRF attacks to internal infrastructure.
+- **Tenant Isolation**: Routing rules enforce strict tenant boundaries.

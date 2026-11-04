@@ -3,6 +3,7 @@ import { hashApiKey, generateMasterRouterApiKey } from './crypto/keys';
 import { hashPassword, verifyPassword, generateSessionId, generateCsrfToken } from './crypto/auth';
 import { RoutingEngine, ProjectRecord, AccountHealthRecord } from './router/engine';
 import { renderDashboardHtml } from './ui/dashboard';
+import { AppwriteClient } from './appwrite/client';
 
 export interface Env {
   DB: D1Database;
@@ -440,6 +441,18 @@ export default {
           return jsonResponse(null, requestId, 'Missing required connection fields: label, endpoint, project_id, api_key.', 400);
         }
 
+        // Validate URL and SSRF protection
+        const urlCheck = AppwriteClient.validateEndpointUrl(endpoint);
+        if (!urlCheck.isValid) {
+          return jsonResponse(null, requestId, urlCheck.error || 'Invalid Appwrite endpoint URL.', 400);
+        }
+
+        // Real upstream Appwrite credential verification before saving
+        const probeResult = await AppwriteClient.verifyConnection(urlCheck.normalizedUrl, project_id, api_key);
+        if (!probeResult.ok && probeResult.status !== 401 && probeResult.status !== 403) {
+          return jsonResponse(null, requestId, `Appwrite verification failed: ${probeResult.error || 'Unable to reach Appwrite server.'}`, 400);
+        }
+
         const vault = new CredentialVault(env.ENCRYPTION_MASTER_KEY || 'default-secure-master-key-32chars');
         const encrypted = await vault.encrypt(api_key);
         const accountId = `acc_${crypto.randomUUID().substring(0, 8)}`;
@@ -449,21 +462,21 @@ export default {
           env.DB.prepare(
             `INSERT INTO connected_accounts (id, label, endpoint, region, encrypted_api_key, encryption_salt, encryption_iv, status, projects_count, last_verified)
              VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?)`
-          ).bind(accountId, label, endpoint, region || 'sgp', encrypted.cipherTextHex, encrypted.saltHex, encrypted.ivHex, now),
+          ).bind(accountId, label, urlCheck.normalizedUrl, region || 'sgp', encrypted.cipherTextHex, encrypted.saltHex, encrypted.ivHex, now),
           env.DB.prepare(
             `INSERT INTO projects (id, account_id, name, appwrite_project_id, region, mode)
              VALUES (?, ?, ?, ?, ?, 'DEDICATED')`
-          ).bind(`proj_${crypto.randomUUID().substring(0, 8)}`, accountId, `${label} Default`, project_id, region || 'sgp'),
+          ).bind(`proj_${crypto.randomUUID().substring(0, 8)}`, accountId, `${label} Primary Node`, project_id, region || 'sgp'),
           env.DB.prepare(
             `INSERT INTO account_health (account_id, status, latency_ms, quota_usage_percent, storage_used_gb)
-             VALUES (?, 'HEALTHY', 45, 10, 0.5)`
-          ).bind(accountId)
+             VALUES (?, 'HEALTHY', ?, 0, 0.0)`
+          ).bind(accountId, probeResult.latencyMs || 50)
         ]);
 
         const newAccount = {
           id: accountId,
           label,
-          endpoint,
+          endpoint: urlCheck.normalizedUrl,
           region: region || 'sgp',
           status: 'ACTIVE',
           projects_count: 1,
@@ -473,7 +486,7 @@ export default {
         return jsonResponse(newAccount, requestId, null, 201);
       }
 
-      // 11. Accounts: POST /v1/accounts/:id/test (Connectivity test)
+      // 11. Accounts: POST /v1/accounts/:id/test (Real Upstream Connectivity Test)
       if (path.startsWith('/v1/accounts/') && path.endsWith('/test') && request.method === 'POST') {
         const parts = path.split('/');
         const accountId = parts[3];
@@ -486,23 +499,32 @@ export default {
           return jsonResponse(null, requestId, `Account ${accountId} not found.`, 404);
         }
 
-        const vault = new CredentialVault(env.ENCRYPTION_MASTER_KEY || 'default-secure-master-key-32chars');
-        const decryptedKey = await vault.decrypt({
-          cipherTextHex: account.encrypted_api_key,
-          saltHex: account.encryption_salt,
-          ivHex: account.encryption_iv
-        });
+        const project: any = await env.DB.prepare(
+          'SELECT appwrite_project_id FROM projects WHERE account_id = ?'
+        ).bind(accountId).first();
 
-        const isConnected = decryptedKey.length > 0;
-        await env.DB.prepare(
-          'UPDATE connected_accounts SET last_verified = datetime("now") WHERE id = ?'
-        ).bind(accountId).run();
+        const projectId = project?.appwrite_project_id || env.DEFAULT_APPWRITE_PROJECT_ID || '6aeb5720003291868b64';
+
+        const decryptedKey = await AppwriteClient.decryptApiKey(account, env.ENCRYPTION_MASTER_KEY);
+        const probeResult = await AppwriteClient.verifyConnection(account.endpoint, projectId, decryptedKey);
+
+        const newStatus = probeResult.ok ? 'HEALTHY' : (probeResult.status === 401 || probeResult.status === 403 ? 'WARNING' : 'CRITICAL');
+
+        await env.DB.batch([
+          env.DB.prepare(
+            'UPDATE connected_accounts SET status = ?, last_verified = datetime("now") WHERE id = ?'
+          ).bind(newStatus === 'HEALTHY' ? 'ACTIVE' : newStatus, accountId),
+          env.DB.prepare(
+            'UPDATE account_health SET status = ?, latency_ms = ?, last_checked_at = datetime("now") WHERE account_id = ?'
+          ).bind(newStatus, probeResult.latencyMs, accountId)
+        ]);
 
         return jsonResponse({
           accountId,
-          connected: isConnected,
-          latency_ms: 48,
-          status: account.status,
+          connected: probeResult.ok,
+          latency_ms: probeResult.latencyMs,
+          status: newStatus,
+          http_status: probeResult.status,
           verified_at: new Date().toISOString()
         }, requestId);
       }
@@ -559,6 +581,209 @@ export default {
             .bind(keyRecord.tenant_id).all();
         }
         return jsonResponse(rules.results, requestId);
+      }
+
+      // --- DATABASE BROWSER ENDPOINTS ---
+      // GET /v1/databases?account_id={id}
+      if (path === '/v1/databases' && request.method === 'GET') {
+        const accountId = url.searchParams.get('account_id');
+        let account: any = null;
+        if (accountId) {
+          account = await env.DB.prepare('SELECT * FROM connected_accounts WHERE id = ?').bind(accountId).first();
+        } else {
+          account = await env.DB.prepare('SELECT * FROM connected_accounts LIMIT 1').first();
+        }
+
+        if (!account) {
+          return jsonResponse([], requestId);
+        }
+
+        const project: any = await env.DB.prepare('SELECT appwrite_project_id FROM projects WHERE account_id = ?').bind(account.id).first();
+        const projectId = project?.appwrite_project_id || env.DEFAULT_APPWRITE_PROJECT_ID || '6aeb5720003291868b64';
+        const apiKey = await AppwriteClient.decryptApiKey(account, env.ENCRYPTION_MASTER_KEY);
+
+        const res = await AppwriteClient.request(account.endpoint, projectId, apiKey, {
+          method: 'GET',
+          path: '/databases'
+        });
+
+        if (!res.ok) {
+          return jsonResponse(null, requestId, res.error || 'Failed to list Appwrite databases', res.status);
+        }
+
+        return jsonResponse(res.data?.databases || [], requestId);
+      }
+
+      // GET /v1/databases/:dbId/collections?account_id={id}
+      if (path.startsWith('/v1/databases/') && path.includes('/collections') && !path.includes('/documents') && request.method === 'GET') {
+        const parts = path.split('/');
+        const dbId = parts[3];
+        const accountId = url.searchParams.get('account_id');
+
+        let account: any = null;
+        if (accountId) {
+          account = await env.DB.prepare('SELECT * FROM connected_accounts WHERE id = ?').bind(accountId).first();
+        } else {
+          account = await env.DB.prepare('SELECT * FROM connected_accounts LIMIT 1').first();
+        }
+
+        if (!account) {
+          return jsonResponse([], requestId);
+        }
+
+        const project: any = await env.DB.prepare('SELECT appwrite_project_id FROM projects WHERE account_id = ?').bind(account.id).first();
+        const projectId = project?.appwrite_project_id || env.DEFAULT_APPWRITE_PROJECT_ID || '6aeb5720003291868b64';
+        const apiKey = await AppwriteClient.decryptApiKey(account, env.ENCRYPTION_MASTER_KEY);
+
+        const res = await AppwriteClient.request(account.endpoint, projectId, apiKey, {
+          method: 'GET',
+          path: `/databases/${dbId}/collections`
+        });
+
+        if (!res.ok) {
+          return jsonResponse(null, requestId, res.error || 'Failed to list collections', res.status);
+        }
+
+        return jsonResponse(res.data?.collections || [], requestId);
+      }
+
+      // Documents CRUD Endpoints
+      if (path.startsWith('/v1/databases/') && path.includes('/collections/') && path.includes('/documents')) {
+        const parts = path.split('/');
+        const dbId = parts[3];
+        const colId = parts[5];
+        const docId = parts[7]; // optional
+
+        const accountId = url.searchParams.get('account_id');
+        let account: any = null;
+        if (accountId) {
+          account = await env.DB.prepare('SELECT * FROM connected_accounts WHERE id = ?').bind(accountId).first();
+        } else {
+          account = await env.DB.prepare('SELECT * FROM connected_accounts LIMIT 1').first();
+        }
+
+        if (!account) {
+          return jsonResponse(null, requestId, 'No connected Appwrite account found', 404);
+        }
+
+        const project: any = await env.DB.prepare('SELECT appwrite_project_id FROM projects WHERE account_id = ?').bind(account.id).first();
+        const projectId = project?.appwrite_project_id || env.DEFAULT_APPWRITE_PROJECT_ID || '6aeb5720003291868b64';
+        const apiKey = await AppwriteClient.decryptApiKey(account, env.ENCRYPTION_MASTER_KEY);
+
+        if (request.method === 'GET') {
+          if (docId) {
+            const res = await AppwriteClient.request(account.endpoint, projectId, apiKey, {
+              method: 'GET',
+              path: `/databases/${dbId}/collections/${colId}/documents/${docId}`
+            });
+            return jsonResponse(res.data, requestId, res.error, res.status);
+          } else {
+            const limit = url.searchParams.get('limit') || '25';
+            const offset = url.searchParams.get('offset') || '0';
+            const res = await AppwriteClient.request(account.endpoint, projectId, apiKey, {
+              method: 'GET',
+              path: `/databases/${dbId}/collections/${colId}/documents`,
+              queryParams: { limit, offset }
+            });
+            if (!res.ok) {
+              return jsonResponse(null, requestId, res.error, res.status);
+            }
+            return jsonResponse(res.data?.documents || [], requestId);
+          }
+        }
+
+        if (request.method === 'POST') {
+          const body: any = await request.json().catch(() => ({}));
+          const documentId = body.document_id || 'unique()';
+          const documentData = body.data || body;
+          const res = await AppwriteClient.request(account.endpoint, projectId, apiKey, {
+            method: 'POST',
+            path: `/databases/${dbId}/collections/${colId}/documents`,
+            body: { documentId, data: documentData }
+          });
+          return jsonResponse(res.data, requestId, res.error, res.status);
+        }
+
+        if (request.method === 'PUT' && docId) {
+          const body: any = await request.json().catch(() => ({}));
+          const documentData = body.data || body;
+          const res = await AppwriteClient.request(account.endpoint, projectId, apiKey, {
+            method: 'PATCH',
+            path: `/databases/${dbId}/collections/${colId}/documents/${docId}`,
+            body: { data: documentData }
+          });
+          return jsonResponse(res.data, requestId, res.error, res.status);
+        }
+
+        if (request.method === 'DELETE' && docId) {
+          const res = await AppwriteClient.request(account.endpoint, projectId, apiKey, {
+            method: 'DELETE',
+            path: `/databases/${dbId}/collections/${colId}/documents/${docId}`
+          });
+          return jsonResponse({ deleted: res.ok }, requestId, res.error, res.status);
+        }
+      }
+
+      // --- TRANSPARENT ROUTER PROXY (/v1/proxy/*) ---
+      if (path.startsWith('/v1/proxy/')) {
+        const subPath = path.replace('/v1/proxy', '');
+        const targetTenant = request.headers.get('X-Tenant-ID') || keyRecord?.tenant_id || 'default_tenant';
+
+        const accounts = await env.DB.prepare(
+          'SELECT id, label, endpoint, region, encrypted_api_key, encryption_salt, encryption_iv, status FROM connected_accounts WHERE status = "ACTIVE"'
+        ).all();
+
+        const healthRecords = await env.DB.prepare('SELECT * FROM account_health').all();
+        const projects = await env.DB.prepare('SELECT * FROM projects').all();
+        const rules = await env.DB.prepare('SELECT * FROM routing_rules').all();
+
+        const router = new RoutingEngine(
+          accounts.results as any,
+          healthRecords.results as any,
+          projects.results as any,
+          rules.results as any
+        );
+
+        const isWrite = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(request.method);
+        const decision = router.selectNode({
+          tenantId: targetTenant,
+          operation: isWrite ? 'WRITE' : 'READ'
+        });
+
+        if (!decision.success || !decision.selectedAccount) {
+          return jsonResponse(null, requestId, `Routing failed: ${decision.reason || 'No eligible Appwrite account available.'}`, 503);
+        }
+
+        const selectedAccount = decision.selectedAccount;
+        const decryptedApiKey = await AppwriteClient.decryptApiKey(selectedAccount as any, env.ENCRYPTION_MASTER_KEY);
+        const requestBody = isWrite ? await request.text().catch(() => undefined) : undefined;
+
+        const proxyResult = await AppwriteClient.request(
+          selectedAccount.endpoint,
+          decision.selectedProject?.appwrite_project_id || env.DEFAULT_APPWRITE_PROJECT_ID || '6aeb5720003291868b64',
+          decryptedApiKey,
+          {
+            method: request.method,
+            path: subPath,
+            body: requestBody
+          }
+        );
+
+        // Meter request usage
+        try {
+          const colName = isWrite ? 'write_requests' : 'read_requests';
+          const today = new Date().toISOString().substring(0, 10);
+          const metricId = `met_${today}_${selectedAccount.id}`;
+          await env.DB.prepare(
+            `INSERT INTO usage_metrics (id, account_id, project_id, ${colName}, period_date)
+             VALUES (?, ?, ?, 1, ?)
+             ON CONFLICT(id) DO UPDATE SET ${colName} = ${colName} + 1`
+          ).bind(metricId, selectedAccount.id, decision.selectedProject?.id || null, today).run();
+        } catch (_: any) {}
+
+        return jsonResponse(proxyResult.data, requestId, proxyResult.error, proxyResult.status, {
+          'X-Selected-Project': decision.selectedProject?.id || 'unknown'
+        });
       }
 
       // 16. Routing Rules: POST /v1/routing/rules

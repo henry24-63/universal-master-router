@@ -126,4 +126,64 @@ interface MasterRouterApi {
     @Header("X-CSRF-Token") csrfToken: String?,
     @Path("id") keyId: String
   ): ApiResponse<Map<String, Any>>
+
+  // Database Browser Endpoints
+  @GET("v1/databases")
+  suspend fun getDatabases(
+    @retrofit2.http.Query("account_id") accountId: String,
+    @Header("X-Master-API-Key") apiKey: String?,
+    @Header("Cookie") sessionCookie: String?
+  ): ApiResponse<List<com.example.data.model.AppwriteDatabase>>
+
+  @GET("v1/databases/{dbId}/collections")
+  suspend fun getCollections(
+    @Path("dbId") databaseId: String,
+    @retrofit2.http.Query("account_id") accountId: String,
+    @Header("X-Master-API-Key") apiKey: String?,
+    @Header("Cookie") sessionCookie: String?
+  ): ApiResponse<List<com.example.data.model.AppwriteCollection>>
+
+  @GET("v1/databases/{dbId}/collections/{colId}/documents")
+  suspend fun getDocuments(
+    @Path("dbId") databaseId: String,
+    @Path("colId") collectionId: String,
+    @retrofit2.http.Query("account_id") accountId: String,
+    @Header("X-Master-API-Key") apiKey: String?,
+    @Header("Cookie") sessionCookie: String?
+  ): ApiResponse<List<Map<String, Any?>>>
+
+  @POST("v1/databases/{dbId}/collections/{colId}/documents")
+  suspend fun createDocument(
+    @Path("dbId") databaseId: String,
+    @Path("colId") collectionId: String,
+    @retrofit2.http.Query("account_id") accountId: String,
+    @Header("X-Master-API-Key") apiKey: String?,
+    @Header("Cookie") sessionCookie: String?,
+    @Header("X-CSRF-Token") csrfToken: String?,
+    @Body request: com.example.data.model.CreateDocumentApiRequest
+  ): ApiResponse<Map<String, Any?>>
+
+  @retrofit2.http.PUT("v1/databases/{dbId}/collections/{colId}/documents/{docId}")
+  suspend fun updateDocument(
+    @Path("dbId") databaseId: String,
+    @Path("colId") collectionId: String,
+    @Path("docId") documentId: String,
+    @retrofit2.http.Query("account_id") accountId: String,
+    @Header("X-Master-API-Key") apiKey: String?,
+    @Header("Cookie") sessionCookie: String?,
+    @Header("X-CSRF-Token") csrfToken: String?,
+    @Body request: com.example.data.model.UpdateDocumentApiRequest
+  ): ApiResponse<Map<String, Any?>>
+
+  @DELETE("v1/databases/{dbId}/collections/{colId}/documents/{docId}")
+  suspend fun deleteDocument(
+    @Path("dbId") databaseId: String,
+    @Path("colId") collectionId: String,
+    @Path("docId") documentId: String,
+    @retrofit2.http.Query("account_id") accountId: String,
+    @Header("X-Master-API-Key") apiKey: String?,
+    @Header("Cookie") sessionCookie: String?,
+    @Header("X-CSRF-Token") csrfToken: String?
+  ): ApiResponse<Map<String, Boolean>>
 }
+

@@ -149,3 +149,24 @@ Save the returned `api_key` (`umr_live_...`). This secret is only displayed once
 4. In **Master Router API Key**, enter the generated `umr_live_...` key.
 5. Tap **Save & Synchronize**.
 6. The app will immediately authenticate and pull live data from Cloudflare D1.
+
+---
+
+## 4. Phase 2.11 — API Endpoints & Transparent Router Proxy
+
+### A. Database Browser REST Endpoints
+These endpoints provide cross-account administrative access to upstream Appwrite databases:
+- `GET /v1/databases?account_id={accountId}` — List databases for connected account.
+- `GET /v1/databases/{dbId}/collections?account_id={accountId}` — List collections inside a database.
+- `GET /v1/databases/{dbId}/collections/{colId}/documents?account_id={accountId}` — List documents in a collection.
+- `POST /v1/databases/{dbId}/collections/{colId}/documents?account_id={accountId}` — Create a document with body `{"document_id": "...", "data": {...}}`.
+- `PUT /v1/databases/{dbId}/collections/{colId}/documents/{docId}?account_id={accountId}` — Update a document with body `{"data": {...}}`.
+- `DELETE /v1/databases/{dbId}/collections/{colId}/documents/{docId}?account_id={accountId}` — Delete a document.
+
+### B. Transparent Proxy Router (`/v1/proxy/*`)
+Client SDKs and mobile applications route Appwrite SDK calls through `/v1/proxy/*`:
+- Target tenant resolved via `X-Appwrite-Project` header or `X-Tenant-ID` header.
+- Routing strategy evaluated via `RoutingEngine` (DIRECT, SHARED_POOL, LEAST_LATENCY, FAILOVER).
+- Requests dispatched securely to upstream Appwrite node using encrypted Master Key with SSRF protection.
+- Metering recorded asynchronously into D1 `usage_metrics`.
+
