@@ -1,62 +1,108 @@
-# Phase 2 — Cloudflare Production Deployment Preparation Plan
+# Phase 2.6 — Secure Admin Login & Embedded Dashboard System Plan
 
 ## Summary
-Preparation, configuration audit, and dual deployment manual (Wrangler CLI and Cloudflare Dashboard) for deploying the Universal Appwrite Master Router backend to the global `*.workers.dev` domain with Cloudflare D1 and KV.
+Implementation plan for the complete administrator authentication system, PBKDF2 password hashing with per-user cryptographic salts, atomic first-admin registration, HttpOnly/Secure/SameSite cookie sessions, CSRF token validation, and an embedded responsive glassmorphism Single Page Application (SPA) dashboard served directly from Cloudflare Worker without separate hosting.
 
 ---
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> - **Deployment Domain**: Cloudflare Global Workers dev domain (`https://universal-master-router.<subdomain>.workers.dev`).
-> - **Setup Guide Format**: Comprehensive dual-path instructions containing both **Wrangler CLI terminal commands** and **Cloudflare Web Dashboard click-through steps**.
-> - **Secrets Policy**: Master encryption key (`ENCRYPTION_MASTER_KEY`) and server-side credentials must be stored strictly in Cloudflare Worker Secrets—never in `wrangler.toml`, Git, client code, or chat logs.
+> - **Dashboard Hosting**: Embedded SPA dashboard served directly by the Cloudflare Worker at `/` and `/admin` with modern glassmorphism styling, zero external static hosting dependencies.
+> - **Password Hashing**: PBKDF2 with 100,000 rounds of SHA-256 and unique 16-byte random salt per administrator in D1 (`admin_users` table).
+> - **Dual Authentication Layer**:
+>   - *Dashboard requests*: Secure `HttpOnly; Secure; SameSite=Strict` cookie (`umr_session`) with CSRF header check.
+>   - *API & Mobile requests*: `X-Master-API-Key` header with constant-time SHA-256 hash lookup in `api_keys`.
+>   - Both mechanisms share the same underlying controllers and data layer.
+> - **Zero Exposure Guarantee**: Internal API keys and passwords are never sent to browser storage (`localStorage`/`sessionStorage`), code, or logs.
 
 ---
 
-## 1. Inspection & Configuration Audit
-
-- **Worker Name**: `universal-master-router`
-- **Main Entry Point**: `src/index.ts`
-- **Compatibility Date**: `2024-09-23`
-- **Database Binding**: `DB` bound to `universal_master_router_db` (Currently contains placeholder `d1-placeholder-id`)
-- **KV Binding**: `ROUTER_KV` bound to rate limiter namespace (Currently contains placeholder `kv-placeholder-id`)
-- **Worker Code Binding Verification**: `env.DB` and `env.ROUTER_KV` in `backend/src/index.ts` match `wrangler.toml` exactly.
-- **Migration Schema Safety**: `backend/migrations/0001_initial_schema.sql` uses `CREATE TABLE IF NOT EXISTS` and `INSERT OR IGNORE`, ensuring safe, idempotent migrations without data loss.
-
----
-
-## 2. D1 Database & KV Namespace Setup
+## 1. Architectural Model & Session Flow
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│                   Cloudflare Cloud Edge                │
-├──────────────────────────┬─────────────────────────────┤
-│ 1. D1 Relational DB      │ universal_master_router_db  │
-│    (Binding: DB)         │ (9 tables, indexes, rules)  │
-├──────────────────────────┼─────────────────────────────┤
-│ 2. KV Namespace          │ ROUTER_KV                   │
-│    (Binding: ROUTER_KV)  │ (Sliding window rate limit) │
-├──────────────────────────┼─────────────────────────────┤
-│ 3. Worker Secrets        │ ENCRYPTION_MASTER_KEY       │
-│    (AES-256-GCM Master)  │ (32+ char cryptographic key)│
-└──────────────────────────┴─────────────────────────────┘
+│               Admin Web Browser (Desktop/Mobile)       │
+└──────────────────────────┬─────────────────────────────┘
+                           │ 1. GET / (Serves Glassmorphism Dashboard)
+                           │ 2. POST /v1/auth/login (email + password)
+┌──────────────────────────▼─────────────────────────────┐
+│             Cloudflare Worker (Auth Layer)             │
+│ ┌────────────────────────────────────────────────────┐ │
+│ │ Session & Cookie Manager (HttpOnly; Secure; Strict)│ │
+│ ├────────────────────────────────────────────────────┤ │
+│ │ PBKDF2 Password Verifier (100k rounds + Salt)      │ │
+│ ├────────────────────────────────────────────────────┤ │
+│ │ Dual-Auth Bridge: Resolves Session Cookie or Key   │ │
+│ └────────────────────────────────────────────────────┘ │
+└────────────┬─────────────────────────────┬─────────────┘
+             │ SQL Queries                 │ Session Lookups
+┌────────────▼─────────────┐ ┌─────────────▼─────────────┐
+│       Cloudflare D1      │ │      Cloudflare KV        │
+│    (admin_users,         │ │    (Sliding window rate   │
+│     admin_sessions)      │ │     limits & sessions)    │
+└──────────────────────────┘ └───────────────────────────┘
 ```
 
 ---
 
-## 3. Production Readiness Checks
+## 2. D1 Schema Migration (`backend/migrations/0002_admin_auth.sql`)
 
-- **CORS Handling**: `Access-Control-Allow-Origin: *`, `OPTIONS` preflight, allowed headers include `X-Master-API-Key`, `Content-Type`, `Authorization`.
-- **Authentication**: Strict validation of `X-Master-API-Key` using SHA-256 hash comparison against `api_keys` table with scope enforcement.
-- **Rate Limiting**: Sliding window KV tracking per minute window (`rate_{keyId}_{minuteWindow}`).
-- **Health Endpoint**: `GET /v1/health` reports status, latency, and quota percentages without exposing server secrets, passwords, or salts.
-- **Zero Exposure**: Decrypted keys exist solely within temporary Worker memory for active API verification and are never persisted or returned in API responses.
+1. `admin_users`:
+   - `id TEXT PRIMARY KEY`
+   - `email TEXT NOT NULL UNIQUE`
+   - `password_hash TEXT NOT NULL`
+   - `password_salt TEXT NOT NULL`
+   - `name TEXT NOT NULL`
+   - `is_owner INTEGER DEFAULT 0`
+   - `created_at TEXT NOT NULL DEFAULT (datetime('now'))`
+2. `admin_sessions`:
+   - `id TEXT PRIMARY KEY` (cryptographically random 32-byte token)
+   - `user_id TEXT NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE`
+   - `csrf_token TEXT NOT NULL`
+   - `expires_at TEXT NOT NULL`
+   - `created_at TEXT NOT NULL DEFAULT (datetime('now'))`
 
 ---
 
-## 4. Execution Roadmap
+## 3. Endpoints & UI Views
 
-1. Update `backend/package.json` to provide dedicated build, test, and typecheck scripts.
-2. Verify TypeScript type checking on backend code.
-3. Prepare the definitive deployment guide detailing exact Cloudflare Dashboard steps, Wrangler terminal commands, placeholder replacements, secret generation, and end-to-end verification tests.
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/` | `GET` | Serves the full glassmorphism admin dashboard SPA HTML/CSS/JS |
+| `/v1/auth/setup` | `POST` | First-time atomic setup (only succeeds if `admin_users` table is empty) |
+| `/v1/auth/setup-status` | `GET` | Returns whether initial owner setup is required (`has_admin: boolean`) |
+| `/v1/auth/login` | `POST` | Authenticates email/password, issues `umr_session` cookie + CSRF token |
+| `/v1/auth/logout` | `POST` | Invalidates session in D1 and clears cookie |
+| `/v1/auth/me` | `GET` | Returns authenticated user profile and CSRF token |
+
+---
+
+## 4. Security Hardening & Rate Limiting
+
+- **Brute Force Protection**: Failed login tracking per IP / email in KV with exponential lockout after 5 consecutive failures.
+- **CSRF Token Guard**: State-changing requests (`POST`, `PUT`, `DELETE`, `PATCH`) using cookie authentication must provide matching `X-CSRF-Token` header.
+- **Atomic Single-Owner Setup**:
+  ```sql
+  INSERT INTO admin_users (id, email, password_hash, password_salt, name, is_owner)
+  SELECT ?, ?, ?, ?, ?, 1
+  WHERE (SELECT count(*) FROM admin_users) = 0;
+  ```
+  Ensures only one owner can ever be initialized through the setup flow.
+
+---
+
+## 5. Verification Roadmap
+
+1. Implement password hashing & session token utilities (`backend/src/crypto/auth.ts`).
+2. Add migration `0002_admin_auth.sql`.
+3. Integrate dual authentication (Cookie + `X-Master-API-Key`) into `backend/src/index.ts`.
+4. Embed the enterprise glassmorphism Dashboard SPA into the Worker.
+5. Create automated test suite in `backend/tests/admin_auth.test.mjs` verifying:
+   - Atomic setup
+   - Successful login/logout
+   - Wrong password rejection
+   - Session expiration
+   - CSRF validation
+   - Existing API key backwards compatibility
+6. Verify Android app compilation and unit tests.
