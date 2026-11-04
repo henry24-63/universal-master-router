@@ -1,0 +1,20 @@
+name = "universal-master-router"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+
+# Cloudflare D1 Database Binding
+[[d1_databases]]
+binding = "DB"
+database_name = "universal_master_router_db"
+database_id = "9dab6110-9d5f-46ad-80fa-04a860528afa"
+
+# Cloudflare KV Binding for routing cache and rate limits
+[[kv_namespaces]]
+binding = "ROUTER_KV"
+id = "68410d07bfc64b2d820769cdb1058c8a"
+
+[vars]
+ENVIRONMENT = "production"
+DEFAULT_APPWRITE_ENDPOINT = "https://sgp.cloud.appwrite.io/v1"
+DEFAULT_APPWRITE_PROJECT_ID = "6aeb5720003291868b64"
+DEFAULT_APPWRITE_REGION = "sgp"
