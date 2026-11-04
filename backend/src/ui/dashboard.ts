@@ -289,6 +289,7 @@ export function renderDashboardHtml(): string {
         <button class="tab-btn" onclick="switchTab('health')">Account Health & Quotas</button>
         <button class="tab-btn" onclick="switchTab('rules')">Routing Rules</button>
         <button class="tab-btn" onclick="switchTab('keys')">Master API Keys</button>
+        <button class="tab-btn" onclick="switchTab('test-suite')">Integration Test Suite</button>
       </div>
 
       <!-- Tab Content: Accounts -->
@@ -427,8 +428,57 @@ export function renderDashboardHtml(): string {
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
-            </thead>
             <tbody id="keys-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tab Content: Integration Test Suite -->
+      <div id="tab-test-suite" class="glass hidden" style="padding: 24px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <div>
+            <h3>Real End-to-End Integration Test Suite</h3>
+            <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px;">Execute real live probes and optional CRUD pipeline against connected Appwrite nodes.</p>
+          </div>
+          <button class="btn btn-primary" id="run-test-suite-btn" onclick="runTestSuite()">🚀 Run Test Suite</button>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px; margin-bottom:16px; background:rgba(0,0,0,0.2); padding:16px; border-radius:12px; border:1px solid var(--card-border);">
+          <div>
+            <label>Target Account</label>
+            <select id="suite-account-select" onchange="onSuiteAccountChange()"><option value="">-- Choose Account --</option></select>
+          </div>
+          <div>
+            <label>Target Database (for CRUD)</label>
+            <select id="suite-database-select" onchange="onSuiteDatabaseChange()"><option value="">-- Choose Database --</option></select>
+          </div>
+          <div>
+            <label>Target Collection (for CRUD)</label>
+            <select id="suite-collection-select"><option value="">-- Choose Collection --</option></select>
+          </div>
+        </div>
+
+        <div style="margin-bottom:20px; display:flex; align-items:center; gap:10px;">
+          <input type="checkbox" id="suite-confirm-write" style="width:18px; height:18px; accent-color:var(--primary); cursor:pointer;">
+          <label for="suite-confirm-write" style="cursor:pointer; color:var(--text-main); font-size:0.85rem;">
+            <strong>Confirm Live Write Test:</strong> Allow suite to create, read, update, and delete a temporary test document in the selected collection.
+          </label>
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Test Stage</th>
+                <th>Status</th>
+                <th>HTTP Code</th>
+                <th>Latency</th>
+                <th>Diagnostic Details</th>
+              </tr>
+            </thead>
+            <tbody id="suite-results-tbody">
+              <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Select parameters above and click 'Run Test Suite' to execute live verification.</td></tr>
+            </tbody>
           </table>
         </div>
       </div>
@@ -878,7 +928,7 @@ export function renderDashboardHtml(): string {
     }
 
     function switchTab(name) {
-      ['accounts', 'projects', 'databases', 'health', 'rules', 'keys'].forEach(t => {
+      ['accounts', 'projects', 'databases', 'health', 'rules', 'keys', 'test-suite'].forEach(t => {
         const el = document.getElementById('tab-' + t);
         if (el) el.classList.add('hidden');
       });
@@ -963,8 +1013,151 @@ export function renderDashboardHtml(): string {
     /* Database Browser Handlers */
     function populateDbAccountDropdown(accounts) {
       const select = document.getElementById('db-account-select');
-      select.innerHTML = '<option value="">-- Choose Account --</option>' + 
-        accounts.map(a => \`<option value="\${a.id}">\${a.label} (\${a.endpoint})</option>\`).join('');
+      if (select) {
+        select.innerHTML = '<option value="">-- Choose Account --</option>' + 
+          accounts.map(a => \`<option value="\${a.id}">\${a.label} (\${a.endpoint})</option>\`).join('');
+      }
+      const suiteSelect = document.getElementById('suite-account-select');
+      if (suiteSelect) {
+        suiteSelect.innerHTML = '<option value="">-- Select Connected Account --</option>' + 
+          accounts.map(a => \`<option value="\${a.id}">\${a.label} (\${a.endpoint})</option>\`).join('');
+      }
+    }
+
+    /* Integration Test Suite Handlers */
+    async function onSuiteAccountChange() {
+      const accountId = document.getElementById('suite-account-select').value;
+      const dbSelect = document.getElementById('suite-database-select');
+      const colSelect = document.getElementById('suite-collection-select');
+
+      dbSelect.disabled = true;
+      dbSelect.innerHTML = '<option value="">Loading Databases...</option>';
+      colSelect.disabled = true;
+      colSelect.innerHTML = '<option value="">-- Select Collection --</option>';
+
+      if (!accountId) {
+        dbSelect.innerHTML = '<option value="">-- Select Database --</option>';
+        return;
+      }
+
+      try {
+        const res = await fetch('/v1/databases?account_id=' + accountId);
+        const data = await res.json();
+        if (data.success && data.data) {
+          dbSelect.innerHTML = '<option value="">-- Select Database --</option>' +
+            data.data.map(d => \`<option value="\${d.\$id}">\${d.name} (\${d.\$id})</option>\`).join('');
+          dbSelect.disabled = false;
+        } else {
+          dbSelect.innerHTML = '<option value="">Error loading databases</option>';
+        }
+      } catch (e) {
+        dbSelect.innerHTML = '<option value="">Error: ' + e.message + '</option>';
+      }
+    }
+
+    async function onSuiteDatabaseChange() {
+      const accountId = document.getElementById('suite-account-select').value;
+      const dbId = document.getElementById('suite-database-select').value;
+      const colSelect = document.getElementById('suite-collection-select');
+
+      colSelect.disabled = true;
+      colSelect.innerHTML = '<option value="">Loading Collections...</option>';
+
+      if (!dbId || !accountId) {
+        colSelect.innerHTML = '<option value="">-- Select Collection --</option>';
+        return;
+      }
+
+      try {
+        const res = await fetch('/v1/databases/' + dbId + '/collections?account_id=' + accountId);
+        const data = await res.json();
+        if (data.success && data.data) {
+          colSelect.innerHTML = '<option value="">-- Select Collection --</option>' +
+            data.data.map(c => \`<option value="\${c.\$id}">\${c.name} (\${c.\$id})</option>\`).join('');
+          colSelect.disabled = false;
+        } else {
+          colSelect.innerHTML = '<option value="">Error loading collections</option>';
+        }
+      } catch (e) {
+        colSelect.innerHTML = '<option value="">Error: ' + e.message + '</option>';
+      }
+    }
+
+    async function runTestSuite() {
+      const apiKey = document.getElementById('suite-api-key-input').value.trim();
+      const accountId = document.getElementById('suite-account-select').value;
+      const databaseId = document.getElementById('suite-database-select').value;
+      const collectionId = document.getElementById('suite-collection-select').value;
+      const confirmWrite = document.getElementById('suite-confirm-write').checked;
+
+      const btn = document.getElementById('run-suite-btn');
+      const summaryEl = document.getElementById('suite-summary');
+      const tbody = document.getElementById('suite-results-tbody');
+
+      if (!apiKey) {
+        alert('Please enter a Master Router API Key to test authentication.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerText = 'Running Integration Suite...';
+      summaryEl.innerText = 'TESTING...';
+      summaryEl.className = 'badge badge-warning';
+
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Executing 9 test suite stages...</td></tr>';
+
+      try {
+        const res = await fetch('/v1/test/integration-suite', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': currentCsrfToken
+          },
+          body: JSON.stringify({
+            api_key: apiKey,
+            account_id: accountId || undefined,
+            database_id: databaseId || undefined,
+            collection_id: collectionId || undefined,
+            confirm_write: confirmWrite
+          })
+        });
+
+        const data = await res.json();
+        if (data.success && data.data) {
+          const report = data.data;
+          summaryEl.innerText = report.overall_status;
+          summaryEl.className = report.overall_status === 'PASSED' ? 'badge badge-success' : 'badge badge-danger';
+
+          tbody.innerHTML = report.stages.map(s => {
+            let badgeClass = 'badge-warning';
+            if (s.status === 'PASSED') badgeClass = 'badge-success';
+            if (s.status === 'FAILED') badgeClass = 'badge-danger';
+
+            return \`
+              <tr>
+                <td><strong>\${s.stage_name}</strong></td>
+                <td><span class="badge \${badgeClass}">\${s.status}</span></td>
+                <td class="mono">\${s.http_status || '-'}</td>
+                <td>\${s.latency_ms !== null && s.latency_ms !== undefined ? s.latency_ms + ' ms' : '-'}</td>
+                <td style="max-width:350px; overflow-x:auto;">\${s.message}</td>
+              </tr>
+            \`;
+          }).join('');
+
+          loadAllData();
+        } else {
+          summaryEl.innerText = 'FAILED';
+          summaryEl.className = 'badge badge-danger';
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--danger);">' + (data.error || 'Failed to execute test suite.') + '</td></tr>';
+        }
+      } catch (err) {
+        summaryEl.innerText = 'ERROR';
+        summaryEl.className = 'badge badge-danger';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--danger);">Error: ' + err.message + '</td></tr>';
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '▶ Run Full Integration Test Suite';
+      }
     }
 
     async function onDbAccountChange() {
