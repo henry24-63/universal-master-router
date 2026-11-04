@@ -2,6 +2,97 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 class RoutingEngine {
+  constructor(accounts = [], healthRecords = [], projects = [], rules = []) {
+    this.accounts = accounts;
+    this.healthRecords = healthRecords;
+    this.projects = projects;
+    this.rules = rules;
+  }
+
+  selectNode(params) {
+    const activeAccounts = this.accounts.filter(a => a.status === 'ACTIVE' || a.status === 'HEALTHY');
+    if (activeAccounts.length === 0) {
+      return { success: false, strategyUsed: 'NONE', reason: 'No active Appwrite accounts' };
+    }
+
+    const healthMap = new Map();
+    this.healthRecords.forEach(h => {
+      const accId = h.accountId || h.account_id;
+      if (accId) healthMap.set(accId, h);
+    });
+
+    const rule = this.rules.find(r => r.tenant_id === params.tenantId || r.tenant_id === '*');
+    const strategy = rule?.strategy || 'ROUND_ROBIN';
+    const targetProjId = params.targetProjectId || rule?.target_project_id;
+
+    const eligibleAccounts = activeAccounts.filter(a => {
+      const h = healthMap.get(a.id);
+      return !h || h.status !== 'CRITICAL';
+    });
+
+    const candidateAccounts = eligibleAccounts.length > 0 ? eligibleAccounts : activeAccounts;
+    let selectedAccount;
+    let reason = '';
+
+    if (strategy === 'LEAST_LATENCY') {
+      selectedAccount = [...candidateAccounts].sort((a, b) => {
+        const latA = healthMap.get(a.id)?.latency_ms ?? 9999;
+        const latB = healthMap.get(b.id)?.latency_ms ?? 9999;
+        return latA - latB;
+      })[0];
+      reason = `Selected account ${selectedAccount.label} based on lowest latency (${healthMap.get(selectedAccount.id)?.latency_ms ?? 'unknown'} ms).`;
+    } else if (strategy === 'FAILOVER') {
+      selectedAccount = candidateAccounts[0];
+      reason = `Selected primary failover account ${selectedAccount.label}.`;
+    } else if (strategy === 'DIRECT' || strategy === 'DEDICATED') {
+      if (targetProjId) {
+        const proj = this.projects.find(p => p.id === targetProjId || p.appwriteProjectId === targetProjId);
+        if (proj) {
+          const acc = candidateAccounts.find(a => a.id === proj.accountId);
+          if (acc) {
+            selectedAccount = acc;
+            reason = `Directly routed to configured project ${proj.name} on account ${acc.label}.`;
+          } else {
+            selectedAccount = candidateAccounts[0];
+            reason = `Fell back to ${selectedAccount.label}`;
+          }
+        } else {
+          selectedAccount = candidateAccounts[0];
+          reason = `Fell back to ${selectedAccount.label}`;
+        }
+      } else {
+        selectedAccount = candidateAccounts[0];
+        reason = `Selected account ${selectedAccount.label}`;
+      }
+    } else {
+      let hash = 0;
+      for (let i = 0; i < params.tenantId.length; i++) {
+        hash = (hash << 5) - hash + params.tenantId.charCodeAt(i);
+        hash |= 0;
+      }
+      const index = Math.abs(hash) % candidateAccounts.length;
+      selectedAccount = candidateAccounts[index];
+      reason = `Deterministic hash pool index ${index} selected account ${selectedAccount.label}`;
+    }
+
+    const matchedProject = this.projects.find(p => p.accountId === selectedAccount.id) || {
+      id: selectedAccount.id,
+      accountId: selectedAccount.id,
+      name: selectedAccount.label,
+      appwriteProjectId: '6aeb5720003291868b64',
+      region: selectedAccount.region,
+      mode: 'SHARED_POOL'
+    };
+
+    return {
+      success: true,
+      selectedAccount,
+      selectedProject: matchedProject,
+      strategyUsed: strategy,
+      reason
+    };
+  }
+
   static selectWriteDestination(
     tenantId,
     strategy,
@@ -37,11 +128,11 @@ class RoutingEngine {
       throw new Error('Routing failure: All available projects are currently quota-exhausted or in critical health.');
     }
 
-    if (strategy === 'DEDICATED') {
+    if (strategy === 'DEDICATED' || strategy === 'DIRECT') {
       const dedicatedProject = healthyProjects.find(p => p.mode === 'DEDICATED') || healthyProjects[0];
       return {
         selectedProject: dedicatedProject,
-        strategyUsed: 'DEDICATED',
+        strategyUsed: strategy,
         reason: `Allocated dedicated project ${dedicatedProject.name}.`
       };
     } else {
@@ -122,6 +213,25 @@ test('RoutingEngine - Shared pool routes deterministically for the same tenant',
 
   assert.equal(decision1.selectedProject.id, decision2.selectedProject.id);
   assert.equal(decision1.selectedProject.mode, 'SHARED_POOL');
+});
+
+test('RoutingEngine - Instance selectNode supports LEAST_LATENCY strategy', () => {
+  const accounts = [
+    { id: 'acc_sgp', label: 'SGP Account', status: 'ACTIVE' },
+    { id: 'acc_fra', label: 'FRA Account', status: 'ACTIVE' }
+  ];
+  const healthRecords = [
+    { accountId: 'acc_sgp', status: 'HEALTHY', latency_ms: 120 },
+    { accountId: 'acc_fra', status: 'HEALTHY', latency_ms: 35 }
+  ];
+  const rules = [{ tenant_id: 'tenant_fast', strategy: 'LEAST_LATENCY' }];
+
+  const engine = new RoutingEngine(accounts, healthRecords, [], rules);
+  const decision = engine.selectNode({ tenantId: 'tenant_fast', operation: 'READ' });
+
+  assert.equal(decision.success, true);
+  assert.equal(decision.selectedAccount.id, 'acc_fra');
+  assert.equal(decision.strategyUsed, 'LEAST_LATENCY');
 });
 
 test('RoutingEngine - Single-destination write invariant (Never fans out)', () => {

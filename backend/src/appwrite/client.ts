@@ -143,6 +143,7 @@ export class AppwriteClient {
       const fetchOptions: RequestInit = {
         method: options.method || 'GET',
         headers,
+        redirect: 'manual',
         signal: controller.signal
       };
 
