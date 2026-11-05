@@ -698,6 +698,11 @@ export function renderDashboardHtml(): string {
     let currentCsrfToken = '';
     let currentUser = null;
 
+    window.onerror = function (message, source, lineno, colno, error) {
+      console.error('DASHBOARD ERROR:', { message, source, lineno, colno, error: error?.stack });
+      // Optionally show a user-friendly error
+    };
+
     function hideAllModals() {
       document.getElementById('error-modal').classList.add('hidden');
       document.getElementById('setup-modal').classList.add('hidden');

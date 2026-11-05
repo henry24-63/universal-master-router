@@ -1,7 +1,6 @@
 {
   "name": "universal-master-router-backend",
   "version": "1.0.0",
-  "type": "module",
   "description": "Production Cloudflare Worker backend for Universal Appwrite Master Router",
   "main": "src/index.ts",
   "scripts": {
