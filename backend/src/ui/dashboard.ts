@@ -454,7 +454,7 @@ export function renderDashboardHtml(): string {
           </div>
         </div>
 
-        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px; margin-bottom:16px; background:rgba(0,0,0,0.2); padding:16px; border-radius:12px; border:1px solid var(--card-border);">
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:16px; margin-bottom:16px; background:rgba(0,0,0,0.2); padding:16px; border-radius:12px; border:1px solid var(--card-border);">
           <div>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <label style="margin-bottom:0;">Target Account</label>
@@ -464,17 +464,33 @@ export function renderDashboardHtml(): string {
           </div>
           <div>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin-bottom:0;">Appwrite API Mode</label>
+            </div>
+            <select id="suite-api-mode-select" onchange="onSuiteApiModeChange()">
+              <option value="AUTO">AUTO (Smart Detect)</option>
+              <option value="TABLESDB">TABLESDB (Tables & Rows)</option>
+              <option value="LEGACY_DATABASES">LEGACY (Collections & Docs)</option>
+            </select>
+          </div>
+          <div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <label style="margin-bottom:0;">Target Database</label>
               <button class="btn btn-outline" style="padding:2px 6px; font-size:0.7rem;" onclick="onSuiteAccountChange()">↻ Refresh</button>
             </div>
             <select id="suite-database-select" onchange="onSuiteDatabaseChange()"><option value="">-- Choose Account First --</option></select>
+            <div id="suite-db-id-container" class="hidden" style="margin-top:6px; font-size:0.75rem; color:var(--text-muted);">
+              ID: <span id="suite-db-id-text" class="mono"></span> <button onclick="copyToClipboard('suite-db-id-text')" style="background:transparent; border:none; color:var(--primary); cursor:pointer; font-size:0.7rem;">Copy</button>
+            </div>
           </div>
           <div>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-              <label style="margin-bottom:0;">Target Collection</label>
+              <label style="margin-bottom:0;" id="suite-resource-label">Target Table</label>
               <button class="btn btn-outline" style="padding:2px 6px; font-size:0.7rem;" onclick="onSuiteDatabaseChange()">↻ Refresh</button>
             </div>
-            <select id="suite-collection-select"><option value="">-- Choose Database First --</option></select>
+            <select id="suite-collection-select" onchange="onSuiteResourceChange()"><option value="">-- Choose Database First --</option></select>
+            <div id="suite-res-id-container" class="hidden" style="margin-top:6px; font-size:0.75rem; color:var(--text-muted);">
+              ID: <span id="suite-res-id-text" class="mono"></span> <button onclick="copyToClipboard('suite-res-id-text')" style="background:transparent; border:none; color:var(--primary); cursor:pointer; font-size:0.7rem;">Copy</button>
+            </div>
           </div>
         </div>
 
@@ -1052,10 +1068,32 @@ export function renderDashboardHtml(): string {
       }
     }
 
+    function copyToClipboard(elementId) {
+      const text = document.getElementById(elementId).innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        alert('Copied ID to clipboard: ' + text);
+      }).catch(err => {
+        alert('Failed to copy: ' + err);
+      });
+    }
+
+    function onSuiteApiModeChange() {
+      const mode = document.getElementById('suite-api-mode-select').value;
+      const label = document.getElementById('suite-resource-label');
+      if (mode === 'LEGACY_DATABASES') {
+        label.innerText = 'Target Collection';
+      } else {
+        label.innerText = 'Target Table';
+      }
+      onSuiteDatabaseChange();
+    }
+
     async function onSuiteAccountChange() {
       const accountId = document.getElementById('suite-account-select').value;
       const dbSelect = document.getElementById('suite-database-select');
       const colSelect = document.getElementById('suite-collection-select');
+      document.getElementById('suite-db-id-container').classList.add('hidden');
+      document.getElementById('suite-res-id-container').classList.add('hidden');
 
       dbSelect.disabled = true;
       dbSelect.innerHTML = '<option value="">Loading Databases...</option>';
@@ -1072,7 +1110,7 @@ export function renderDashboardHtml(): string {
         const data = await res.json();
         if (data.success && data.data) {
           if (data.data.length === 0) {
-            dbSelect.innerHTML = '<option value="">(No databases found in this project)</option>';
+            dbSelect.innerHTML = '<option value="">(No databases found in project)</option>';
             dbSelect.disabled = true;
             return;
           }
@@ -1093,29 +1131,71 @@ export function renderDashboardHtml(): string {
       const accountId = document.getElementById('suite-account-select').value;
       const dbId = document.getElementById('suite-database-select').value;
       const colSelect = document.getElementById('suite-collection-select');
+      const apiMode = document.getElementById('suite-api-mode-select').value;
 
-      colSelect.disabled = true;
-      colSelect.innerHTML = '<option value="">Loading Collections...</option>';
+      document.getElementById('suite-res-id-container').classList.add('hidden');
 
       if (!dbId || !accountId) {
+        colSelect.disabled = true;
         colSelect.innerHTML = '<option value="">-- Choose Database First --</option>';
+        document.getElementById('suite-db-id-container').classList.add('hidden');
         return;
       }
 
+      document.getElementById('suite-db-id-text').innerText = dbId;
+      document.getElementById('suite-db-id-container').classList.remove('hidden');
+
+      colSelect.disabled = true;
+      colSelect.innerHTML = '<option value="">Loading Resources...</option>';
+
+      let fetchPath = \`/v1/tablesdb/\${dbId}/tables?account_id=\${accountId}\`;
+      let labelText = 'Table';
+
+      if (apiMode === 'LEGACY_DATABASES') {
+        fetchPath = \`/v1/databases/\${dbId}/collections?account_id=\${accountId}\`;
+        labelText = 'Collection';
+      } else if (apiMode === 'AUTO') {
+        try {
+          const probeRes = await fetch(\`/v1/tablesdb/\${dbId}/tables?account_id=\${accountId}\`);
+          const probeData = await probeRes.json();
+          if (!probeData.success || (probeData.error && probeData.error.includes('404'))) {
+            fetchPath = \`/v1/databases/\${dbId}/collections?account_id=\${accountId}\`;
+            labelText = 'Collection';
+          }
+        } catch {
+          fetchPath = \`/v1/databases/\${dbId}/collections?account_id=\${accountId}\`;
+          labelText = 'Collection';
+        }
+      }
+
+      document.getElementById('suite-resource-label').innerText = \`Target \${labelText}\`;
+
       try {
-        const res = await fetch('/v1/databases/' + dbId + '/collections?account_id=' + accountId);
+        const res = await fetch(fetchPath);
         const data = await res.json();
         if (data.success && data.data) {
-          if (data.data.length === 0) {
-            colSelect.innerHTML = '<option value="">(No collections found in this database)</option>';
+          const items = Array.isArray(data.data) ? data.data : (data.data.tables || data.data.collections || []);
+          if (items.length === 0) {
+            colSelect.innerHTML = \`<option value="">(No \${labelText.toLowerCase()}s found)</option>\`;
             colSelect.disabled = true;
             return;
           }
-          colSelect.innerHTML = '<option value="">-- Choose Collection --</option>' +
-            data.data.map(c => \`<option value="\${c.\$id}">\${c.name} (\${c.\$id})</option>\`).join('');
+          colSelect.innerHTML = \`<option value="">-- Choose \${labelText} --</option>\` +
+            items.map(i => \`<option value="\${i.\$id}">\${i.name || i.id || i.\$id} (\${i.\$id})</option>\`).join('');
           colSelect.disabled = false;
         } else {
-          colSelect.innerHTML = \`<option value="">Error: \${data.error || 'Failed to list collections'}</option>\`;
+          if (apiMode === 'AUTO' && fetchPath.includes('tablesdb')) {
+            const fallbackRes = await fetch(\`/v1/databases/\${dbId}/collections?account_id=\${accountId}\`);
+            const fallbackData = await fallbackRes.json();
+            if (fallbackData.success && fallbackData.data && fallbackData.data.length > 0) {
+              document.getElementById('suite-resource-label').innerText = 'Target Collection';
+              colSelect.innerHTML = '<option value="">-- Choose Collection --</option>' +
+                fallbackData.data.map(c => \`<option value="\${c.\$id}">\${c.name} (\${c.\$id})</option>\`).join('');
+              colSelect.disabled = false;
+              return;
+            }
+          }
+          colSelect.innerHTML = \`<option value="">Error: \${data.error || 'Failed to list resources'}</option>\`;
           colSelect.disabled = true;
         }
       } catch (e) {
@@ -1124,11 +1204,23 @@ export function renderDashboardHtml(): string {
       }
     }
 
+    function onSuiteResourceChange() {
+      const resId = document.getElementById('suite-collection-select').value;
+      const resContainer = document.getElementById('suite-res-id-container');
+      if (resId) {
+        document.getElementById('suite-res-id-text').innerText = resId;
+        resContainer.classList.remove('hidden');
+      } else {
+        resContainer.classList.add('hidden');
+      }
+    }
+
     async function runTestSuite() {
       const apiKey = document.getElementById('suite-api-key-input').value.trim();
       const accountId = document.getElementById('suite-account-select').value;
+      const apiMode = document.getElementById('suite-api-mode-select').value;
       const databaseId = document.getElementById('suite-database-select').value;
-      const collectionId = document.getElementById('suite-collection-select').value;
+      const resourceId = document.getElementById('suite-collection-select').value;
       const confirmWrite = document.getElementById('suite-confirm-write').checked;
 
       const btn = document.getElementById('run-test-suite-btn');
@@ -1150,8 +1242,8 @@ export function renderDashboardHtml(): string {
         document.getElementById('suite-database-select').focus();
         return;
       }
-      if (!collectionId) {
-        alert('Please select a Target Collection.');
+      if (!resourceId) {
+        alert('Please select a Target Table or Collection.');
         document.getElementById('suite-collection-select').focus();
         return;
       }
@@ -1161,7 +1253,7 @@ export function renderDashboardHtml(): string {
       summaryEl.innerText = 'TESTING...';
       summaryEl.className = 'badge badge-warning';
 
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Executing 9 test suite stages against Appwrite Cloud...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Executing 14 test suite stages against Appwrite Cloud...</td></tr>';
 
       try {
         const res = await fetch('/v1/test/integration-suite', {
@@ -1173,8 +1265,9 @@ export function renderDashboardHtml(): string {
           body: JSON.stringify({
             api_key: apiKey,
             account_id: accountId,
+            api_mode: apiMode,
             database_id: databaseId,
-            collection_id: collectionId,
+            resource_id: resourceId,
             confirm_write: confirmWrite
           })
         });
@@ -1188,7 +1281,7 @@ export function renderDashboardHtml(): string {
           tbody.innerHTML = report.stages.map(s => {
             let badgeClass = 'badge-warning';
             if (s.status === 'PASSED') badgeClass = 'badge-success';
-            if (s.status === 'FAILED') badgeClass = 'badge-danger';
+            if (s.status === 'FAILED' || s.status === 'BLOCKED') badgeClass = 'badge-danger';
 
             return \`
               <tr>
@@ -1215,6 +1308,7 @@ export function renderDashboardHtml(): string {
         btn.disabled = false;
         btn.innerText = '🚀 Run Test Suite';
       }
+    }
     }
 
     async function onDbAccountChange() {

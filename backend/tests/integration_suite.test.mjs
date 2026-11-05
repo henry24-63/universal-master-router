@@ -267,20 +267,20 @@ test('Integration Suite - Respect confirm_write=false flag for write operations'
     assert.equal(data.data.stages[3].status, 'PASSED');
     assert.equal(data.data.stages[4].status, 'PASSED');
 
-    // Write stages 6-8 are NOT TESTED
-    assert.equal(data.data.stages[5].stage_name, '6. Document Creation');
-    assert.equal(data.data.stages[5].status, 'NOT TESTED');
-    assert.match(data.data.stages[5].message, /confirm_write/);
-
-    assert.equal(data.data.stages[6].stage_name, '7. Document Update');
+    // Write stages 8-13 are NOT TESTED
+    assert.equal(data.data.stages[6].stage_name, '8. Temporary Document Creation');
     assert.equal(data.data.stages[6].status, 'NOT TESTED');
+    assert.match(data.data.stages[6].message, /confirm_write/);
 
-    assert.equal(data.data.stages[7].stage_name, '8. Document Deletion');
-    assert.equal(data.data.stages[7].status, 'NOT TESTED');
+    assert.equal(data.data.stages[8].stage_name, '10. Temporary Document Update');
+    assert.equal(data.data.stages[8].status, 'NOT TESTED');
 
-    // Stage 9 (Usage Metering) passes
-    assert.equal(data.data.stages[8].stage_name, '9. Usage Metering Verification');
-    assert.equal(data.data.stages[8].status, 'PASSED');
+    assert.equal(data.data.stages[10].stage_name, '12. Temporary Document Deletion');
+    assert.equal(data.data.stages[10].status, 'NOT TESTED');
+
+    // Stage 14 (Usage Metering) passes
+    assert.equal(data.data.stages[12].stage_name, '14. Usage Metering Verification');
+    assert.equal(data.data.stages[12].status, 'PASSED');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -318,6 +318,7 @@ test('Integration Suite - Full execution with confirm_write=true creates, update
   const env = createEnv(db);
 
   const originalFetch = globalThis.fetch;
+  let getDocumentGetCount = 0;
   globalThis.fetch = async (url, options) => {
     const urlStr = url.toString();
     const method = (options?.method || 'GET').toUpperCase();
@@ -341,6 +342,14 @@ test('Integration Suite - Full execution with confirm_write=true creates, update
       if (method === 'DELETE') {
         return new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
+      if (method === 'GET' && urlStr.includes('test_doc_')) {
+        getDocumentGetCount++;
+        if (getDocumentGetCount <= 2) {
+          return new Response(JSON.stringify({ $id: 'test_doc_123', status: 'created' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        } else {
+          return new Response(JSON.stringify({ message: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
       return new Response(JSON.stringify({ documents: [{ $id: 'doc_1', title: 'Hello' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     return new Response(JSON.stringify({ message: 'OK' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -356,12 +365,15 @@ test('Integration Suite - Full execution with confirm_write=true creates, update
     const res = await worker.fetch(req, env);
     assert.equal(res.status, 200);
     const data = await res.json();
+    if (data.data.overall_status !== 'PASSED') {
+      console.error('STAGES FAILURE DEBUG:', JSON.stringify(data.data.stages, null, 2));
+    }
     assert.equal(data.success, true);
     assert.equal(data.data.overall_status, 'PASSED');
 
-    // All 9 stages should be PASSED
-    for (let i = 0; i < 9; i++) {
-      assert.equal(data.data.stages[i].status, 'PASSED', `Stage ${i + 1} (${data.data.stages[i].stage_name}) should be PASSED`);
+    // All 13 stages should be PASSED
+    for (let i = 0; i < 13; i++) {
+      assert.equal(data.data.stages[i].status, 'PASSED', `Stage ${i + 1} (${data.data.stages[i].stage_name}) should be PASSED: ${data.data.stages[i].message}`);
     }
   } finally {
     globalThis.fetch = originalFetch;
