@@ -1024,6 +1024,16 @@ export default {
         return jsonResponse({ id: keyId, revoked: true }, requestId);
       }
 
+      // 21. Provisioning API
+      if (path.startsWith('/v1/provisioning/') && request.method === 'POST') {
+        // TODO: Implement provisioning logic
+        return jsonResponse({ success: true, message: 'Provisioning endpoint' }, requestId);
+      }
+      if (path.startsWith('/v1/provisioning/') && request.method === 'GET') {
+        // TODO: Implement provisioning logic
+        return jsonResponse({ success: true, message: 'Provisioning endpoint' }, requestId);
+      }
+
       // 20. Integration Test Suite: POST /v1/test/integration-suite
       if (path === '/v1/test/integration-suite' && request.method === 'POST') {
         if (!isAdmin && !hasScope(keyRecord?.scopes, 'admin:*') && !hasScope(keyRecord?.scopes, '*')) {
