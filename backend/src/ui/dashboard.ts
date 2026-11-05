@@ -440,21 +440,41 @@ export function renderDashboardHtml(): string {
             <h3>Real End-to-End Integration Test Suite</h3>
             <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px;">Execute real live probes and optional CRUD pipeline against connected Appwrite nodes.</p>
           </div>
-          <button class="btn btn-primary" id="run-test-suite-btn" onclick="runTestSuite()">🚀 Run Test Suite</button>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span id="suite-summary" class="badge badge-warning">NOT TESTED</span>
+            <button class="btn btn-primary" id="run-test-suite-btn" onclick="runTestSuite()">🚀 Run Test Suite</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom:16px; background:rgba(0,0,0,0.2); padding:16px; border-radius:12px; border:1px solid var(--card-border);">
+          <label style="margin-bottom:6px;">Master API Key (Required for Stage 1 Authentication)</label>
+          <div style="position:relative;">
+            <input type="password" id="suite-api-key-input" placeholder="Enter active Master API Key (umr_...)" style="padding-right:45px;">
+            <button type="button" onclick="toggleSuiteApiKeyVisibility()" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:1.1rem;" title="Show/Hide API Key">👁</button>
+          </div>
         </div>
 
         <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px; margin-bottom:16px; background:rgba(0,0,0,0.2); padding:16px; border-radius:12px; border:1px solid var(--card-border);">
           <div>
-            <label>Target Account</label>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin-bottom:0;">Target Account</label>
+              <button class="btn btn-outline" style="padding:2px 6px; font-size:0.7rem;" onclick="loadAllData()">↻ Refresh</button>
+            </div>
             <select id="suite-account-select" onchange="onSuiteAccountChange()"><option value="">-- Choose Account --</option></select>
           </div>
           <div>
-            <label>Target Database (for CRUD)</label>
-            <select id="suite-database-select" onchange="onSuiteDatabaseChange()"><option value="">-- Choose Database --</option></select>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin-bottom:0;">Target Database</label>
+              <button class="btn btn-outline" style="padding:2px 6px; font-size:0.7rem;" onclick="onSuiteAccountChange()">↻ Refresh</button>
+            </div>
+            <select id="suite-database-select" onchange="onSuiteDatabaseChange()"><option value="">-- Choose Account First --</option></select>
           </div>
           <div>
-            <label>Target Collection (for CRUD)</label>
-            <select id="suite-collection-select"><option value="">-- Choose Collection --</option></select>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin-bottom:0;">Target Collection</label>
+              <button class="btn btn-outline" style="padding:2px 6px; font-size:0.7rem;" onclick="onSuiteDatabaseChange()">↻ Refresh</button>
+            </div>
+            <select id="suite-collection-select"><option value="">-- Choose Database First --</option></select>
           </div>
         </div>
 
@@ -477,7 +497,7 @@ export function renderDashboardHtml(): string {
               </tr>
             </thead>
             <tbody id="suite-results-tbody">
-              <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Select parameters above and click 'Run Test Suite' to execute live verification.</td></tr>
+              <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Enter API Key, select account, database, and collection, then click 'Run Test Suite'.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1025,6 +1045,13 @@ export function renderDashboardHtml(): string {
     }
 
     /* Integration Test Suite Handlers */
+    function toggleSuiteApiKeyVisibility() {
+      const input = document.getElementById('suite-api-key-input');
+      if (input) {
+        input.type = input.type === 'password' ? 'text' : 'password';
+      }
+    }
+
     async function onSuiteAccountChange() {
       const accountId = document.getElementById('suite-account-select').value;
       const dbSelect = document.getElementById('suite-database-select');
@@ -1033,10 +1060,10 @@ export function renderDashboardHtml(): string {
       dbSelect.disabled = true;
       dbSelect.innerHTML = '<option value="">Loading Databases...</option>';
       colSelect.disabled = true;
-      colSelect.innerHTML = '<option value="">-- Select Collection --</option>';
+      colSelect.innerHTML = '<option value="">-- Choose Database First --</option>';
 
       if (!accountId) {
-        dbSelect.innerHTML = '<option value="">-- Select Database --</option>';
+        dbSelect.innerHTML = '<option value="">-- Choose Account First --</option>';
         return;
       }
 
@@ -1044,14 +1071,21 @@ export function renderDashboardHtml(): string {
         const res = await fetch('/v1/databases?account_id=' + accountId);
         const data = await res.json();
         if (data.success && data.data) {
-          dbSelect.innerHTML = '<option value="">-- Select Database --</option>' +
+          if (data.data.length === 0) {
+            dbSelect.innerHTML = '<option value="">(No databases found in this project)</option>';
+            dbSelect.disabled = true;
+            return;
+          }
+          dbSelect.innerHTML = '<option value="">-- Choose Database --</option>' +
             data.data.map(d => \`<option value="\${d.\$id}">\${d.name} (\${d.\$id})</option>\`).join('');
           dbSelect.disabled = false;
         } else {
-          dbSelect.innerHTML = '<option value="">Error loading databases</option>';
+          dbSelect.innerHTML = \`<option value="">Error: \${data.error || 'Failed to list databases'}</option>\`;
+          dbSelect.disabled = true;
         }
       } catch (e) {
-        dbSelect.innerHTML = '<option value="">Error: ' + e.message + '</option>';
+        dbSelect.innerHTML = \`<option value="">Error: \${e.message}</option>\`;
+        dbSelect.disabled = true;
       }
     }
 
@@ -1064,7 +1098,7 @@ export function renderDashboardHtml(): string {
       colSelect.innerHTML = '<option value="">Loading Collections...</option>';
 
       if (!dbId || !accountId) {
-        colSelect.innerHTML = '<option value="">-- Select Collection --</option>';
+        colSelect.innerHTML = '<option value="">-- Choose Database First --</option>';
         return;
       }
 
@@ -1072,14 +1106,21 @@ export function renderDashboardHtml(): string {
         const res = await fetch('/v1/databases/' + dbId + '/collections?account_id=' + accountId);
         const data = await res.json();
         if (data.success && data.data) {
-          colSelect.innerHTML = '<option value="">-- Select Collection --</option>' +
+          if (data.data.length === 0) {
+            colSelect.innerHTML = '<option value="">(No collections found in this database)</option>';
+            colSelect.disabled = true;
+            return;
+          }
+          colSelect.innerHTML = '<option value="">-- Choose Collection --</option>' +
             data.data.map(c => \`<option value="\${c.\$id}">\${c.name} (\${c.\$id})</option>\`).join('');
           colSelect.disabled = false;
         } else {
-          colSelect.innerHTML = '<option value="">Error loading collections</option>';
+          colSelect.innerHTML = \`<option value="">Error: \${data.error || 'Failed to list collections'}</option>\`;
+          colSelect.disabled = true;
         }
       } catch (e) {
-        colSelect.innerHTML = '<option value="">Error: ' + e.message + '</option>';
+        colSelect.innerHTML = \`<option value="">Error: \${e.message}</option>\`;
+        colSelect.disabled = true;
       }
     }
 
@@ -1090,21 +1131,37 @@ export function renderDashboardHtml(): string {
       const collectionId = document.getElementById('suite-collection-select').value;
       const confirmWrite = document.getElementById('suite-confirm-write').checked;
 
-      const btn = document.getElementById('run-suite-btn');
+      const btn = document.getElementById('run-test-suite-btn');
       const summaryEl = document.getElementById('suite-summary');
       const tbody = document.getElementById('suite-results-tbody');
 
       if (!apiKey) {
-        alert('Please enter a Master Router API Key to test authentication.');
+        alert('Please enter a valid Master API Key to test authentication.');
+        document.getElementById('suite-api-key-input').focus();
+        return;
+      }
+      if (!accountId) {
+        alert('Please select a Target Connected Account.');
+        document.getElementById('suite-account-select').focus();
+        return;
+      }
+      if (!databaseId) {
+        alert('Please select a Target Database.');
+        document.getElementById('suite-database-select').focus();
+        return;
+      }
+      if (!collectionId) {
+        alert('Please select a Target Collection.');
+        document.getElementById('suite-collection-select').focus();
         return;
       }
 
       btn.disabled = true;
-      btn.innerText = 'Running Integration Suite...';
+      btn.innerText = 'Running Test Suite...';
       summaryEl.innerText = 'TESTING...';
       summaryEl.className = 'badge badge-warning';
 
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Executing 9 test suite stages...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Executing 9 test suite stages against Appwrite Cloud...</td></tr>';
 
       try {
         const res = await fetch('/v1/test/integration-suite', {
@@ -1115,9 +1172,9 @@ export function renderDashboardHtml(): string {
           },
           body: JSON.stringify({
             api_key: apiKey,
-            account_id: accountId || undefined,
-            database_id: databaseId || undefined,
-            collection_id: collectionId || undefined,
+            account_id: accountId,
+            database_id: databaseId,
+            collection_id: collectionId,
             confirm_write: confirmWrite
           })
         });
@@ -1156,7 +1213,7 @@ export function renderDashboardHtml(): string {
         tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--danger);">Error: ' + err.message + '</td></tr>';
       } finally {
         btn.disabled = false;
-        btn.innerText = '▶ Run Full Integration Test Suite';
+        btn.innerText = '🚀 Run Test Suite';
       }
     }
 
